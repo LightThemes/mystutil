@@ -1,6 +1,6 @@
 # MystUtil
 
-Windows system optimization tool with a modern dark UI.
+A Windows system optimization tool that cleans temp files, browser cache, and VRChat data, runs system scans, resets network settings, and installs popular software—all through a modern dark-themed interface.
 
 ## Quick Start
 
