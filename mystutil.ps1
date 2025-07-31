@@ -1,6 +1,6 @@
 ############################################################################################################
 ###                                                                                                      ###
-### MystUtil - System Optimization and Maintenance Tool                                                  ###
+### MystUtil - A System Optimization Tool                                                 ###
 ###   https://github.com/LightThemes/mystutil                                                            ###
 ###                                                                                                      ###
 ############################################################################################################
@@ -1021,7 +1021,7 @@ $xaml = @'
                     <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Center">
                         <TextBlock Text="MystUtil" FontSize="24" FontWeight="Bold"
                                 Foreground="#64B5F6" FontFamily="Segoe UI"/>
-                        <TextBlock Text="System Optimization Tool" FontSize="11"
+                        <TextBlock Text="A System Optimization Tool" FontSize="11"
                                 Foreground="White" FontFamily="Segoe UI"/>
                     </StackPanel>
 
@@ -1435,7 +1435,7 @@ Write-Log "Starting MystUtil v2.2..." -Level "INFO"
 
 Write-Host ""
 Write-Host ("=" * 70) -ForegroundColor Blue
-Write-Host " MystUtil - System Optimization and Maintenance Tool" -ForegroundColor Cyan
+Write-Host " MystUtil - A System Optimization Tool" -ForegroundColor Cyan
 Write-Host " https://github.com/LightThemes/mystutil" -ForegroundColor DarkGray
 Write-Host ("=" * 70) -ForegroundColor Blue
 Write-Host ""
