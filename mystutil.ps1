@@ -699,17 +699,11 @@ function Start-AdminPowerShell {
     }
 }
 
-function Test-CustomFunction {
+function Invoke-YureiMaintenance {
     try {
-        # ================================
-        # Yurei's Custom Maintenance Start
-        # ================================
         Update-Status "Yurei's custom maintenance is starting..." "INFO"
         Write-Log "Starting Yurei's personalized system cleanup routine." -Level "INFO"
 
-        # ================================
-        # Phase 1: Quick Cleanup Tasks
-        # ================================
         Update-Status "Phase 1/4: Starting quick cleanup tasks..." "INFO"
         Write-Log "Phase 1: Quick cleanup tasks..." -Level "INFO"
 
@@ -723,49 +717,83 @@ function Test-CustomFunction {
         Update-Status "Phase 1 complete - proceeding to system scans..." "SUCCESS"
         Write-Log "Phase 1 completed successfully" -Level "SUCCESS"
 
-        # ================================
-        # Phase 2: System Scans (Long Running)
-        # ================================
         Update-Status "Phase 2/4: Starting comprehensive system scans..." "INFO"
         Write-Log "Phase 2: System integrity scans..." -Level "INFO"
 
-        Start-SFCScan  # This will now wait until complete
+        Start-SFCScan
 
         Update-Status "Phase 2 complete - proceeding to hardware analysis..." "SUCCESS"
         Write-Log "Phase 2 completed successfully" -Level "SUCCESS"
 
-        # ================================
-        # Phase 3: Hardware Analysis
-        # ================================
         Update-Status "Phase 3/4: Starting driver analysis..." "INFO"
         Write-Log "Phase 3: Hardware and driver analysis..." -Level "INFO"
 
-        Start-DriverCheck  # Runs after SFC is done
+        Start-DriverCheck
 
         Update-Status "Phase 3 complete - proceeding to final cleanup..." "SUCCESS"
         Write-Log "Phase 3 completed successfully" -Level "SUCCESS"
 
-        # ================================
-        # Phase 4: Final Cleanup
-        # ================================
         Update-Status "Phase 4/4: Starting final system cleanup..." "INFO"
         Write-Log "Phase 4: Final system cleanup..." -Level "INFO"
 
-        Start-DiskCleanup  # Runs in background
+        Start-DiskCleanup
 
-        # ================================
-        # Completion
-        # ================================
         Update-Status "All phases complete! Yurei's maintenance finished successfully!" "SUCCESS"
         Write-Log "All maintenance tasks completed! Yurei's system is now optimized and ready." -Level "SUCCESS"
 
     }
     catch {
-        # ================================
-        # Error Handling
-        # ================================
         Update-Status "Yurei's maintenance failed: $($_.Exception.Message)" "ERROR"
         Write-Log "Yurei's maintenance routine encountered an error: $($_.Exception.Message)" -Level "ERROR"
+    }
+}
+
+function Invoke-MystMaintenance {
+    try {
+        Update-Status "Myst's custom maintenance is starting..." "INFO"
+        Write-Log "Starting Myst's personalized system cleanup routine." -Level "INFO"
+
+        Update-Status "Phase 1/4: Starting quick cleanup tasks..." "INFO"
+        Write-Log "Phase 1: Quick cleanup tasks..." -Level "INFO"
+
+        Clear-TempFiles
+        Clear-BrowserCache
+        Clear-DNSCache
+        Reset-NetworkStack
+        Clear-VRChatData
+        Clear-RecycleBin
+
+        Update-Status "Phase 1 complete - proceeding to system scans..." "SUCCESS"
+        Write-Log "Phase 1 completed successfully" -Level "SUCCESS"
+
+        Update-Status "Phase 2/4: Starting comprehensive system scans..." "INFO"
+        Write-Log "Phase 2: System integrity scans..." -Level "INFO"
+
+        Start-SFCScan
+
+        Update-Status "Phase 2 complete - proceeding to hardware analysis..." "SUCCESS"
+        Write-Log "Phase 2 completed successfully" -Level "SUCCESS"
+
+        Update-Status "Phase 3/4: Starting driver analysis..." "INFO"
+        Write-Log "Phase 3: Hardware and driver analysis..." -Level "INFO"
+
+        Start-DriverCheck
+
+        Update-Status "Phase 3 complete - proceeding to final cleanup..." "SUCCESS"
+        Write-Log "Phase 3 completed successfully" -Level "SUCCESS"
+
+        Update-Status "Phase 4/4: Starting final system cleanup..." "INFO"
+        Write-Log "Phase 4: Final system cleanup..." -Level "INFO"
+
+        Start-DiskCleanup
+
+        Update-Status "All phases complete! Myst's maintenance finished successfully!" "SUCCESS"
+        Write-Log "All maintenance tasks completed! Myst's system is now optimized and ready." -Level "SUCCESS"
+
+    }
+    catch {
+        Update-Status "Myst's maintenance failed: $($_.Exception.Message)" "ERROR"
+        Write-Log "Myst's maintenance routine encountered an error: $($_.Exception.Message)" -Level "ERROR"
     }
 }
 
@@ -854,7 +882,8 @@ $script:ButtonConfig = @(
 
     @{ Name = "Clear VRChat Data"; Description = "Clears VRChat cache, logs, and temporary data"; Action = "Clear-VRChatData"; Category = "Games"; Icon = "[VRC]" },
 
-    @{ Name = "Yurei"; Description = "For Yurei"; Action = "Test-CustomFunction"; Category = "Custom"; Icon = "[TEST]" },
+    @{ Name = "Yurei"; Description = "For Yurei"; Action = "Invoke-YureiMaintenance"; Category = "Custom"; Icon = "[TEST]" },
+    @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" },
 
     @{ Name = "Disk Cleanup Tool"; Description = "Opens Windows built-in Disk Cleanup utility"; Action = "Start-DiskCleanup"; Category = "Advanced"; Icon = "[DSK]" },
     @{ Name = "Registry Editor"; Description = "Opens Windows Registry Editor (use with caution)"; Action = "Start-RegistryEditor"; Category = "Advanced"; Icon = "[REG]" },
@@ -992,7 +1021,7 @@ $xaml = @'
                     <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Center">
                         <TextBlock Text="MystUtil" FontSize="24" FontWeight="Bold"
                                 Foreground="#64B5F6" FontFamily="Segoe UI"/>
-                        <TextBlock Text="System Optimization and Maintenance Tool" FontSize="11"
+                        <TextBlock Text="System Optimization Tool" FontSize="11"
                                 Foreground="White" FontFamily="Segoe UI"/>
                     </StackPanel>
 
@@ -1061,7 +1090,7 @@ $xaml = @'
                     <TextBlock Name="StatusText" Grid.Column="0" Text="Ready" Foreground="White"
                             VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI"/>
 
-                    <TextBlock Grid.Column="1" Text="v2.1 | Running as Administrator" Foreground="#888888"
+                    <TextBlock Grid.Column="1" Text="v2.2 | Running as Administrator" Foreground="#888888"
                             VerticalAlignment="Center" FontSize="10" FontFamily="Segoe UI"/>
                 </Grid>
             </Border>
@@ -1402,13 +1431,13 @@ function Initialize-UI {
 # Application Entry Point
 #===========================================================================
 
-Write-Log "Starting MystUtil v2.1..." -Level "INFO"
+Write-Log "Starting MystUtil v2.2..." -Level "INFO"
 
 Write-Host ""
-Write-Host "=" * 70 -ForegroundColor Blue
+Write-Host ("=" * 70) -ForegroundColor Blue
 Write-Host " MystUtil - System Optimization and Maintenance Tool" -ForegroundColor Cyan
 Write-Host " https://github.com/LightThemes/mystutil" -ForegroundColor DarkGray
-Write-Host "=" * 70 -ForegroundColor Blue
+Write-Host ("=" * 70) -ForegroundColor Blue
 Write-Host ""
 Write-Host " Status: " -ForegroundColor White -NoNewline
 Write-Host "Starting application..." -ForegroundColor Cyan
@@ -1417,7 +1446,7 @@ Write-Host "Administrator privileges active" -ForegroundColor Green
 Write-Host " Time:   " -ForegroundColor White -NoNewline
 Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
 Write-Host ""
-Write-Host "-" * 70 -ForegroundColor DarkBlue
+Write-Host ("-" * 70) -ForegroundColor DarkBlue
 
 try {
     Initialize-UI
@@ -1425,9 +1454,9 @@ try {
 catch {
     Write-Log "Application failed to start: $($_.Exception.Message)" -Level "ERROR"
     Write-Host ""
-    Write-Host "=" * 70 -ForegroundColor Red
+    Write-Host ("=" * 70) -ForegroundColor Red
     Write-Host " APPLICATION STARTUP FAILED" -ForegroundColor Red
-    Write-Host "=" * 70 -ForegroundColor Red
+    Write-Host ("=" * 70) -ForegroundColor Red
     Write-Host ""
     Write-Host " Error: " -ForegroundColor White -NoNewline
     Write-Host "$($_.Exception.Message)" -ForegroundColor Red
@@ -1439,7 +1468,7 @@ catch {
 
 Write-Log "Application closed gracefully" -Level "INFO"
 Write-Host ""
-Write-Host "=" * 70 -ForegroundColor Blue
+Write-Host ("=" * 70) -ForegroundColor Blue
 Write-Host " MystUtil closed gracefully" -ForegroundColor Cyan
-Write-Host "=" * 70 -ForegroundColor Blue
+Write-Host ("=" * 70) -ForegroundColor Blue
 Write-Host ""
