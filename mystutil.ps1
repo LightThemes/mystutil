@@ -797,6 +797,82 @@ function Invoke-MystMaintenance {
     }
 }
 
+function Start-Debloat {
+    Update-Status "Checking removable packages..." "INFO"
+    Write-Log "Starting debloat process..." -Level "INFO"
+
+    $bloatware = @(
+        "Microsoft.ZuneVideo",
+        "Microsoft.3DViewer",
+        "Microsoft.BingWeather",
+        "Microsoft.BingNews",
+        "Microsoft.BingFinance",
+        "Microsoft.BingSports",
+        "Microsoft.MSNWeather",
+        "Microsoft.People",
+        "Microsoft.GetHelp",
+        "Microsoft.Getstarted",
+        "Microsoft.WindowsAlarms",
+        "Microsoft.WindowsMaps",
+        "Microsoft.WindowsSoundRecorder",
+        "Microsoft.XboxApp",
+        "Microsoft.XboxGameOverlay",
+        "Microsoft.XboxGamingOverlay",
+        "Microsoft.XboxSpeechToTextOverlay",
+        "Microsoft.Xbox.TCUI",
+        "Microsoft.XboxIdentityProvider",
+        "Microsoft.YourPhone",
+        "Microsoft.CrossDevice",
+        "Microsoft.GamingServices",
+        "Microsoft.QuickAssist",
+        "Microsoft.windowscommunicationsapps",
+        "Microsoft.WindowsInkWorkspace",
+        "Microsoft.WindowsFeedbackHub",
+        "Microsoft.Paint",
+        "Microsoft.Todos"
+    )
+
+    $allPackages = Get-AppxPackage -AllUsers
+
+    $removed = 0
+    $notFound = 0
+    $systemProtected = 0
+
+    foreach ($app in $bloatware) {
+        $packages = $allPackages | Where-Object { $_.Name -like "*$app*" }
+
+        if ($packages) {
+            foreach ($package in $packages) {
+                if ($package.NonRemovable -eq $true) {
+                    Update-Status "System Protected: $($package.Name)" "WARN"
+                    Write-Log "System protected app: $($package.Name)" -Level "WARN"
+                    $systemProtected++
+                    continue
+                }
+                try {
+                    Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction Stop
+                    Update-Status "Removed: $($package.Name)" "SUCCESS"
+                    Write-Log "Removed: $($package.Name)" -Level "SUCCESS"
+                    $removed++
+                }
+                catch {
+                    Update-Status "Failed to remove: $($package.Name) - $($_.Exception.Message)" "ERROR"
+                    Write-Log "Failed to remove: $($package.Name) - $($_.Exception.Message)" -Level "ERROR"
+                }
+            }
+        }
+        else {
+            Update-Status "Not found: $app" "INFO"
+            Write-Log "Not found: $app" -Level "INFO"
+            $notFound++
+        }
+    }
+
+    $summary = "Removed: $removed apps | Not found: $notFound apps | System Protected: $systemProtected apps"
+    Update-Status "Debloat complete. $summary" "SUCCESS"
+    Write-Log "Debloat summary: $summary" -Level "SUCCESS"
+}
+
 # ================================
 # Driver Analysis Function
 # ================================
@@ -884,6 +960,7 @@ $script:ButtonConfig = @(
 
     @{ Name = "Yurei"; Description = "For Yurei"; Action = "Invoke-YureiMaintenance"; Category = "Custom"; Icon = "[TEST]" },
     @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" },
+    @{ Name = "Debloat System"; Description = "Removes unnecessary Windows bloatware"; Action = "Start-Debloat"; Category = "Custom"; Icon = "[TEST]" },
 
     @{ Name = "Disk Cleanup Tool"; Description = "Opens Windows built-in Disk Cleanup utility"; Action = "Start-DiskCleanup"; Category = "Advanced"; Icon = "[DSK]" },
     @{ Name = "Registry Editor"; Description = "Opens Windows Registry Editor (use with caution)"; Action = "Start-RegistryEditor"; Category = "Advanced"; Icon = "[REG]" },
