@@ -1,47 +1,51 @@
 # MystUtil
 
-A Windows system optimization tool that cleans temp files, browser cache, and VRChat data, runs system scans, resets network settings, and installs popular software—all through a modern dark-themed interface.
+A Windows system optimization tool with a modern dark interface. Cleans temporary files, manages system health, installs software, and provides gaming optimizations.
 
 ## Quick Start
 
-**Run directly (recommended):**
+**Run directly (Recommended):**
 
 ```powershell
 irm https://raw.githubusercontent.com/LightThemes/mystutil/main/mystutil.ps1 | iex
 ```
 
-Or, **download and run manually:**
+**Or download manually:**
 
 1. [Download mystutil.ps1](https://github.com/LightThemes/mystutil/raw/main/mystutil.ps1)
-2. Right-click the file, choose **Run with PowerShell** (or open a PowerShell window and run `.\mystutil.ps1`)
+2. Right-click → **Run with PowerShell**
 
-> **Note:** You may need to right-click and select **Run as administrator** for full functionality.
+> **Note:** Requires administrator privileges (auto-requested)
 
----
+## Features
+
+- **Cleanup Tools** - Remove temporary files, browser cache, and application data
+- **System Tools** - Run diagnostics, repair system files, and reset network settings
+- **Software Installation** - Download and install popular applications
+- **Gaming Optimizations** - VRChat cache management and registry cleanup
+- **Custom Maintenance** - Personalized system optimization routines
 
 ## Usage
 
-- On launch, MystUtil will open a modern window with categorized tools.
-- Click any tool button to run its maintenance or optimization task.
-- Status and results will be shown in the window and the PowerShell console.
-- Some tools may prompt for confirmation or show progress in the status bar.
-- Logs are saved to `%TEMP%\MystUtil.log` for troubleshooting.
-
-### Common Tasks
-
-- **Cleanup**: Remove temp files, browser cache, recycle bin, VRChat data
-- **Install**: Download and install popular utilities (7-Zip, VS Code, Chrome, WinRAR)
-- **System**: Run SFC scan, reset network, flush DNS
-- **Advanced**: Disk cleanup, open registry editor, launch admin terminals
-- **Custom**: Access your own tools in the Personal section
-
----
+- Click any tool to run it
+- Status updates appear in real-time
+- Logs saved to `%TEMP%\MystUtil.log`
+- Search bar to quickly find tools
 
 ## Requirements
 
 - Windows 10/11
-- Admin privileges (auto-requested)
+- PowerShell 5.1+
+- Administrator privileges
 
-## ⚠️ Disclaimer
+## License
 
-**Use at your own risk.** This software is provided "as is" without warranty. The author is not responsible for any damage or data loss. Always backup important data before use.
+**Personal Use Only** - Made for personal use and sharing with friends.
+
+## Disclaimer
+
+Use at your own risk. No warranty provided. Backup important data before use.
+
+---
+
+**Made for personal use by [LightThemes](https://github.com/LightThemes)**
