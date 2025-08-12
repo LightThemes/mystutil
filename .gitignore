@@ -1,1 +1,18 @@
+# Logs
+*.log
+
+# Windows
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Temp files
+temp/
+tmp/
+
+# IDE files
+.vscode/
+
+# Project files to ignore
 todo.md
+.gitignore

@@ -1,12 +1,5 @@
-############################################################################################################
-###                                                                                                      ###
-### MystUtil - A System Optimization Tool                                                 ###
-###   https://github.com/LightThemes/mystutil                                                            ###
-###                                                                                                      ###
-############################################################################################################
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 
-[CmdletBinding()]
 param (
     [switch]$DebugMode,
     [string]$Config,
@@ -14,28 +7,26 @@ param (
     [switch]$NoSingleInstance
 )
 
-# Performance optimizations
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
 
-# Memory optimization
 [System.GC]::Collect()
 [System.GC]::WaitForPendingFinalizers()
 
-# Load required assemblies
 Add-Type -AssemblyName PresentationFramework, System.Windows.Forms
 
-# Global synchronized hashtable for thread safety
 $script:sync = [Hashtable]::Synchronized(@{
         LogPath      = Join-Path $env:TEMP "MystUtil.log"
         ConfigPath   = Join-Path $env:APPDATA "MystUtil"
         SettingsFile = Join-Path $env:APPDATA "MystUtil\settings.json"
     })
 
-#===========================================================================
-# Core Logging & Status Functions
-#===========================================================================
+$script:BlueColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
+$script:GrayColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(180, 180, 180))
+$script:DarkColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(42, 42, 47))
+$script:SearchTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:SearchTimer.Interval = [TimeSpan]::FromMilliseconds(300)
 
 function Write-Log {
     [CmdletBinding()]
@@ -52,9 +43,10 @@ function Write-Log {
 
     try {
         [System.IO.File]::AppendAllText($script:sync.LogPath, "$logEntry`n")
-    }
-    catch {
-        # Silently fail if logging fails
+    } catch {
+        if ($Level -eq "ERROR") {
+            Write-Host "Logging failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
     }
 
     if ($DebugMode -and $Level -eq "DEBUG") {
@@ -76,19 +68,15 @@ function Update-Status {
 
     $timestamp = Get-Date -Format "HH:mm:ss"
 
-    # Thread-safe UI update
     if ($script:sync.StatusText) {
         try {
             $script:sync.StatusText.Dispatcher.BeginInvoke([Action] {
                     $script:sync.StatusText.Text = $Message
+                    $script:sync.StatusText.Foreground = $script:BlueColor
                 }) | Out-Null
-        }
-        catch {
-            # Silently fail if UI update fails
-        }
+        } catch { }
     }
 
-    # Enhanced console output with improved colors and formatting
     $prefix = "[$timestamp]"
     $separator = " >> "
 
@@ -119,32 +107,18 @@ function Update-Status {
     }
 
     Write-Log $Message -Level $Level
-
-    # Non-blocking UI refresh
-    try {
-        [System.Windows.Forms.Application]::DoEvents()
-    }
-    catch {
-        # Silently fail if DoEvents fails
-    }
 }
 
-#===========================================================================
-# Admin Elevation & Single Instance
-#===========================================================================
-
-# Enhanced console color setup for better readability
 if ($Host.Name -eq "ConsoleHost") {
-    $Host.UI.RawUI.BackgroundColor = "DarkBlue"
+    $Host.UI.RawUI.BackgroundColor = "Black"
     $Host.UI.RawUI.ForegroundColor = "White"
 
-    # Set console buffer size for better scrolling
     try {
         $bufferSize = $Host.UI.RawUI.BufferSize
         $bufferSize.Height = 3000
+
         $Host.UI.RawUI.BufferSize = $bufferSize
 
-        # Set window size for better visibility
         $windowSize = $Host.UI.RawUI.WindowSize
         if ($windowSize.Width -lt 120) {
             $windowSize.Width = 120
@@ -153,22 +127,16 @@ if ($Host.Name -eq "ConsoleHost") {
             $windowSize.Height = 30
         }
         $Host.UI.RawUI.WindowSize = $windowSize
-    }
-    catch {
-        # Ignore if we can't resize
-    }
-
+    } catch {}
     Clear-Host
 }
 
-# Check for admin privileges and elevate if needed
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $arguments = @()
     $PSBoundParameters.GetEnumerator() | ForEach-Object {
         if ($_.Value -is [switch] -and $_.Value) {
             $arguments += "-$($_.Key)"
-        }
-        elseif ($_.Value) {
+        } elseif ($_.Value) {
             $arguments += "-$($_.Key)", "'$($_.Value)'"
         }
     }
@@ -179,7 +147,6 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
     exit
 }
 
-# Single instance enforcement
 if (!$NoSingleInstance) {
     Get-Process -Name "powershell*" -ErrorAction SilentlyContinue |
     Where-Object { $_.Id -ne $PID -and $_.MainWindowTitle -like "*MystUtil*" } |
@@ -189,17 +156,6 @@ if (!$NoSingleInstance) {
 $Host.UI.RawUI.WindowTitle = "MystUtil (Admin)"
 Clear-Host
 
-# Set console colors
-if ($Host.Name -eq "ConsoleHost") {
-    $Host.UI.RawUI.BackgroundColor = "Black"
-    $Host.UI.RawUI.ForegroundColor = "White"
-    Clear-Host
-}
-
-#===========================================================================
-# Configuration Management
-#===========================================================================
-
 class AppSettings {
     [int]$WindowWidth = 900
     [int]$WindowHeight = 700
@@ -208,68 +164,73 @@ class AppSettings {
 }
 
 function Initialize-Configuration {
+    $script:sync.CurrentFilter = @("Cleanup", "Install", "System", "Games")
+
     if (!(Test-Path $script:sync.ConfigPath)) {
         try {
             [System.IO.Directory]::CreateDirectory($script:sync.ConfigPath) | Out-Null
-        }
-        catch {
-            Write-Log "Failed to create config directory" -Level "WARN"
+            Write-Log "Created configuration directory: $($script:sync.ConfigPath)" -Level "INFO"
+        } catch {
+            Write-Log "Failed to create config directory: $($_.Exception.Message)" -Level "WARN"
         }
     }
 
     try {
         if (Test-Path $script:sync.SettingsFile) {
             $json = [System.IO.File]::ReadAllText($script:sync.SettingsFile)
-            $script:sync.Settings = [AppSettings]($json | ConvertFrom-Json)
-        }
-        else {
+            $loadedSettings = $json | ConvertFrom-Json
+            $script:sync.Settings = [AppSettings]::new()
+
+            if ($loadedSettings.WindowWidth) { $script:sync.Settings.WindowWidth = $loadedSettings.WindowWidth }
+            if ($loadedSettings.WindowHeight) { $script:sync.Settings.WindowHeight = $loadedSettings.WindowHeight }
+            if ($loadedSettings.LastTab) { $script:sync.Settings.LastTab = $loadedSettings.LastTab }
+            if ($loadedSettings.Theme) { $script:sync.Settings.Theme = $loadedSettings.Theme }
+
+            Write-Log "Settings loaded successfully from: $($script:sync.SettingsFile)" -Level "INFO"
+        } else {
             $script:sync.Settings = [AppSettings]::new()
             Save-Configuration
+            Write-Log "Created default settings file: $($script:sync.SettingsFile)" -Level "INFO"
         }
-    }
-    catch {
+    } catch {
         $script:sync.Settings = [AppSettings]::new()
-        Write-Log "Failed to load settings, using defaults" -Level "WARN"
+        Write-Log "Failed to load settings, using defaults: $($_.Exception.Message)" -Level "WARN"
     }
+
+    if ($script:sync.Settings.LastTab -notin @("Main", "Custom")) {
+        $script:sync.Settings.LastTab = "Main"
+        Write-Log "Reset invalid LastTab to 'Main'" -Level "INFO"
+    }
+
+    Write-Log "Configuration initialized - CurrentFilter: $($script:sync.CurrentFilter -join ', ')" -Level "INFO"
 }
 
 function Save-Configuration {
     try {
         $json = $script:sync.Settings | ConvertTo-Json -Depth 2
         [System.IO.File]::WriteAllText($script:sync.SettingsFile, $json)
-    }
-    catch {
+    } catch {
         Write-Log "Failed to save configuration" -Level "ERROR"
     }
 }
 
-Initialize-Configuration
-
-#===========================================================================
-# Utility Functions
-#===========================================================================
-
 function Get-FolderSize {
-    [CmdletBinding()]
     param([string]$Path)
-
     if (![System.IO.Directory]::Exists($Path)) { return 0 }
 
     try {
-        $size = (Get-ChildItem -Path $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
-            Measure-Object -Property Length -Sum).Sum
-        return [math]::Round($size / 1MB, 2)
-    }
-    catch {
-        return 0
-    }
+        $size = [System.IO.Directory]::EnumerateFiles($Path, "*", "AllDirectories") |
+        ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum
+        return [math]::Round($size.Sum / 1MB, 2)
+    } catch { return 0 }
 }
 
 function Remove-ItemsSafely {
     [CmdletBinding()]
     param(
         [string]$Path,
-        [string]$Description
+        [string]$Description,
+        [string[]]$ExcludeFiles = @()
     )
 
     if (![System.IO.Directory]::Exists($Path)) {
@@ -283,23 +244,46 @@ function Remove-ItemsSafely {
         $items = @(Get-ChildItem -Path $Path -Force -ErrorAction SilentlyContinue)
 
         if ($items.Count -gt 0) {
-            Update-Status "Clearing: $Description ($($items.Count) items)..."
-            foreach ($item in $items) {
-                try {
-                    # Add -Confirm:$false to bypass prompts
-                    Remove-Item -Path $item.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+            $filteredItems = $items
+
+            if ($ExcludeFiles.Count -gt 0) {
+                $filteredItems = $items | Where-Object {
+                    $fileName = $_.Name
+                    $shouldExclude = $false
+                    foreach ($excludePattern in $ExcludeFiles) {
+                        if ($fileName -like $excludePattern) {
+                            $shouldExclude = $true
+                            break
+                        }
+                    }
+                    return -not $shouldExclude
                 }
-                catch {
-                    # Continue with other items
+
+                $excludedCount = $items.Count - $filteredItems.Count
+                if ($excludedCount -gt 0) {
+                    Update-Status "Clearing: $Description ($($filteredItems.Count) items, $excludedCount excluded)..."
+                } else {
+                    Update-Status "Clearing: $Description ($($filteredItems.Count) items)..."
                 }
+            } else {
+                Update-Status "Clearing: $Description ($($filteredItems.Count) items)..."
             }
-            Update-Status "Cleared: $Description - $($items.Count) items (${sizeBefore}MB)"
-        }
-        else {
+
+            foreach ($item in $filteredItems) {
+                try {
+                    Remove-Item -Path $item.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+                } catch {}
+            }
+
+            if ($ExcludeFiles.Count -gt 0 -and ($items.Count - $filteredItems.Count) -gt 0) {
+                Update-Status "Cleared: $Description - $($filteredItems.Count) items (${sizeBefore}MB, troubleshooting files preserved)"
+            } else {
+                Update-Status "Cleared: $Description - $($filteredItems.Count) items (${sizeBefore}MB)"
+            }
+        } else {
             Update-Status "Skipped: $Description (empty)"
         }
-    }
-    catch {
+    } catch {
         Update-Status "Failed: $Description - $($_.Exception.Message)" "ERROR"
         return 0
     }
@@ -322,7 +306,6 @@ function Install-Software {
         $fileName = if ($FileName) { $FileName } else { "$($Name -replace ' ', '_')-installer.exe" }
         $installerPath = Join-Path $env:TEMP $fileName
 
-        # Check if already installed
         $programFiles = @("${env:ProgramFiles}", "${env:ProgramFiles(x86)}")
         $isInstalled = $false
 
@@ -352,22 +335,16 @@ function Install-Software {
 
         if ($process.ExitCode -eq 0) {
             Update-Status "$Name installed successfully"
-        }
-        else {
+        } else {
             Update-Status "$Name installation completed with exit code: $($process.ExitCode)" "WARN"
         }
 
         Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
 
-    }
-    catch {
+    } catch {
         Update-Status "Failed to install $Name - $($_.Exception.Message)" "ERROR"
     }
 }
-
-#===========================================================================
-# Cleanup Functions
-#===========================================================================
 
 function Clear-TempFiles {
     Update-Status "Starting comprehensive temp cleanup..."
@@ -384,20 +361,22 @@ function Clear-TempFiles {
 
     $totalFreed = 0
     foreach ($tempPath in $tempPaths) {
-        $totalFreed += Remove-ItemsSafely -Path $tempPath.Path -Description $tempPath.Name
+        if ($tempPath.Path -eq $env:TEMP) {
+            $totalFreed += Remove-ItemsSafely -Path $tempPath.Path -Description $tempPath.Name -ExcludeFiles @("MystUtil.log")
+        } else {
+            $totalFreed += Remove-ItemsSafely -Path $tempPath.Path -Description $tempPath.Name
+        }
     }
 
     try {
         Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
         $totalFreed += Remove-ItemsSafely -Path "C:\Windows\SoftwareDistribution\Download" -Description "Windows Update Cache"
         Start-Service -Name wuauserv -ErrorAction SilentlyContinue
-    }
-    catch {
+    } catch {
         Update-Status "Could not clean Windows Update cache" "WARN"
     }
 
-    Update-Status "Temp cleanup complete - ${totalFreed}MB freed" "SUCCESS"
-    Write-Log "Temp cleanup completed - ${totalFreed}MB total space freed" -Level "SUCCESS"
+    Update-Status "Temp cleanup complete - ${totalFreed}MB freed (MystUtil.log preserved)" "SUCCESS"
 }
 
 function Clear-VRChatData {
@@ -430,10 +409,91 @@ function Clear-VRChatData {
     if ($found) {
         Update-Status "VRChat cleanup complete - ${totalFreed}MB freed" "SUCCESS"
         Write-Log "VRChat cleanup completed - ${totalFreed}MB total space freed" -Level "SUCCESS"
-    }
-    else {
+    } else {
         Update-Status "No VRChat installation found" "WARN"
         Write-Log "No VRChat installation found on system" -Level "WARN"
+    }
+}
+
+function Remove-VRChatRegistry {
+    try {
+        Update-Status "Scanning for VRChat registry entries..." "INFO"
+        Write-Log "Starting VRChat registry cleanup..." -Level "INFO"
+
+        $registryPaths = @(
+            "HKCU:\Software\VRChat",
+            "HKLM:\Software\VRChat",
+            "HKLM:\Software\WOW6432Node\VRChat",
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VRChat",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VRChat",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\VRChat"
+        )
+
+        $foundEntries = 0
+        $removedEntries = 0
+
+        foreach ($regPath in $registryPaths) {
+            try {
+                if (Test-Path $regPath) {
+                    $foundEntries++
+                    Update-Status "Removing registry key: $regPath" "INFO"
+                    Remove-Item -Path $regPath -Recurse -Force -Confirm:$false -ErrorAction Stop
+                    Update-Status "Removed: $regPath" "SUCCESS"
+                    Write-Log "Successfully removed registry key: $regPath" -Level "SUCCESS"
+                    $removedEntries++
+                } else {
+                    Write-Log "Registry key not found: $regPath" -Level "INFO"
+                }
+            } catch {
+                Update-Status "Failed to remove: $regPath - $($_.Exception.Message)" "ERROR"
+                Write-Log "Failed to remove registry key $regPath`: $($_.Exception.Message)" -Level "ERROR"
+            }
+        }
+        $runKeys = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+        )
+
+        foreach ($runKey in $runKeys) {
+            try {
+                if (Test-Path $runKey) {
+                    $runEntries = Get-ItemProperty -Path $runKey -ErrorAction SilentlyContinue
+                    if ($runEntries) {
+                        $runEntries.PSObject.Properties | Where-Object {
+                            $_.Name -like "*VRChat*" -or $_.Value -like "*VRChat*"
+                        } | ForEach-Object {
+                            try {
+                                $foundEntries++
+                                Update-Status "Removing startup entry: $($_.Name)" "INFO"
+                                Remove-ItemProperty -Path $runKey -Name $_.Name -Force -ErrorAction Stop
+                                Update-Status "Removed startup entry: $($_.Name)" "SUCCESS"
+                                Write-Log "Removed VRChat startup entry: $($_.Name)" -Level "SUCCESS"
+                                $removedEntries++
+                            } catch {
+                                Update-Status "Failed to remove startup entry: $($_.Name)" "ERROR"
+                                Write-Log "Failed to remove startup entry $($_.Name): $($_.Exception.Message)" -Level "ERROR"
+                            }
+                        }
+                    }
+                }
+            } catch {
+                Write-Log "Could not scan run key $runKey`: $($_.Exception.Message)" -Level "WARN"
+            }
+        }
+
+        if ($foundEntries -eq 0) {
+            Update-Status "No VRChat registry entries found" "INFO"
+            Write-Log "No VRChat registry entries found on system" -Level "INFO"
+        } else {
+            $summary = "Registry cleanup complete - found $foundEntries entries, removed $removedEntries"
+            Update-Status $summary "SUCCESS"
+            Write-Log "VRChat registry cleanup summary: $summary" -Level "SUCCESS"
+        }
+
+    } catch {
+        Update-Status "VRChat registry cleanup failed: $($_.Exception.Message)" "ERROR"
+        Write-Log "VRChat registry cleanup failed: $($_.Exception.Message)" -Level "ERROR"
     }
 }
 
@@ -456,14 +516,11 @@ function Clear-BrowserCache {
                 $cachePath = Join-Path $_.FullName "cache2"
                 $totalFreed += Remove-ItemsSafely -Path $cachePath -Description "Firefox Cache ($($_.Name))"
             }
-        }
-        else {
+        } else {
             $totalFreed += Remove-ItemsSafely -Path $browser.Path -Description $browser.Name
         }
     }
-
     Update-Status "Browser cleanup complete - ${totalFreed}MB freed" "SUCCESS"
-    Write-Log "Browser cache cleanup completed - ${totalFreed}MB total space freed" -Level "SUCCESS"
 }
 
 function Reset-NetworkStack {
@@ -481,8 +538,7 @@ function Reset-NetworkStack {
         try {
             Invoke-Expression $command.Cmd | Out-Null
             Update-Status "Completed: $($command.Desc)"
-        }
-        catch {
+        } catch {
             Update-Status "Failed: $($command.Desc)" "ERROR"
         }
     }
@@ -495,18 +551,15 @@ function Clear-RecycleBin {
         Update-Status "Emptying Recycle Bin..."
         Write-Log "Starting Recycle Bin cleanup..." -Level "INFO"
 
-        # Method 1: Try PowerShell cmdlet with timeout
         $job = Start-Job -ScriptBlock {
             try {
                 Clear-RecycleBin -Force -Confirm:$false -ErrorAction Stop
                 return "Success"
-            }
-            catch {
+            } catch {
                 return "Failed: $($_.Exception.Message)"
             }
         }
 
-        # Wait for job with timeout (10 seconds max)
         $completed = Wait-Job $job -Timeout 10
 
         if ($completed) {
@@ -518,71 +571,135 @@ function Clear-RecycleBin {
                 Write-Log "Recycle Bin cleared via PowerShell cmdlet" -Level "INFO"
                 return
             }
-        }
-        else {
-            # Job timed out, kill it
+        } else {
             Remove-Job $job -Force
             Write-Log "PowerShell Clear-RecycleBin timed out, trying alternative method" -Level "WARN"
         }
 
-        # Method 2: COM object fallback
         try {
             $shell = New-Object -ComObject Shell.Application
             $recycleBin = $shell.Namespace(10)
-
             if ($recycleBin.Items().Count -gt 0) {
-                # Empty recycle bin using COM
                 $recycleBin.Self.InvokeVerb("Empty")
-                Start-Sleep -Seconds 2  # Give it time to process
+                Start-Sleep -Seconds 2
                 Update-Status "Recycle Bin emptied successfully (via COM)" "INFO"
                 Write-Log "Recycle Bin cleared via COM object" -Level "INFO"
-            }
-            else {
+            } else {
                 Update-Status "Recycle Bin is already empty" "INFO"
                 Write-Log "Recycle Bin was already empty" -Level "INFO"
             }
-        }
-        catch {
-            # Method 3: Command line fallback
+        } catch {
             try {
                 Write-Log "Trying command line method for Recycle Bin" -Level "INFO"
                 $result = cmd /c "rd /s /q C:\`$Recycle.Bin" 2>&1
                 Update-Status "Recycle Bin cleared via command line" "INFO"
                 Write-Log "Recycle Bin cleared via command line" -Level "INFO"
-            }
-            catch {
+            } catch {
                 Update-Status "Could not empty Recycle Bin - may already be empty or in use" "WARN"
                 Write-Log "All Recycle Bin clearing methods failed" -Level "WARN"
             }
         }
-    }
-    catch {
+    } catch {
         Update-Status "Failed to empty Recycle Bin: $($_.Exception.Message)" "ERROR"
         Write-Log "Recycle Bin cleanup failed: $($_.Exception.Message)" -Level "ERROR"
     }
+}
+
+function Clear-SpotifyCache {
+    Update-Status "Starting Spotify cache cleanup..."
+    Write-Log "Starting Spotify cache cleanup..." -Level "INFO"
+
+    $spotifyPaths = @(
+        "$env:APPDATA\Spotify\Storage",
+        "$env:APPDATA\Spotify\Data",
+        "$env:APPDATA\Spotify\Browser",
+        "$env:LOCALAPPDATA\Spotify\Storage",
+        "$env:LOCALAPPDATA\Spotify\Data"
+    )
+
+    $totalFreed = 0
+    $found = $false
+
+    foreach ($path in $spotifyPaths) {
+        if ([System.IO.Directory]::Exists($path)) {
+            $found = $true
+            $totalFreed += Remove-ItemsSafely -Path $path -Description "Spotify Cache"
+        }
+    }
+
+    if ($found) {
+        Update-Status "Spotify cache cleanup complete - ${totalFreed}MB freed" "SUCCESS"
+    } else {
+        Update-Status "No Spotify installation found" "WARN"
+        Write-Log "No Spotify installation found on system" -Level "WARN"
+    }
+}
+
+function Clear-SteamCache {
+    Update-Status "Starting Steam cache cleanup..."
+    Write-Log "Starting Steam cache cleanup..." -Level "INFO"
+
+    $steamPaths = @(
+        "${env:ProgramFiles(x86)}\Steam",
+        "$env:ProgramFiles\Steam",
+        "C:\Steam"
+    )
+
+    $steamPath = $null
+    foreach ($path in $steamPaths) {
+        if ([System.IO.Directory]::Exists($path)) {
+            $steamPath = $path
+            break
+        }
+    }
+
+    if (!$steamPath) {
+        Update-Status "No Steam installation found" "WARN"
+        Write-Log "No Steam installation found on system" -Level "WARN"
+        return
+    }
+
+    $cachePaths = @(
+        "$steamPath\appcache",
+        "$steamPath\logs",
+        "$steamPath\dumps",
+        "$steamPath\config\htmlcache"
+    )
+
+    $totalFreed = 0
+    foreach ($cachePath in $cachePaths) {
+        if ([System.IO.Directory]::Exists($cachePath)) {
+            $pathName = Split-Path $cachePath -Leaf
+            $totalFreed += Remove-ItemsSafely -Path $cachePath -Description "Steam $pathName"
+        }
+    }
+
+    Update-Status "Steam cache cleanup complete - ${totalFreed}MB freed" "SUCCESS"
+    Write-Log "Steam cache cleanup completed - ${totalFreed}MB total space freed" -Level "SUCCESS"
 }
 
 function Start-DiskCleanup {
     try {
         Update-Status "Running automated disk cleanup..."
 
-        # Run disk cleanup with all options enabled, no UI
         $process = Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/sagerun:1" -Wait -PassThru -WindowStyle Hidden
 
         if ($process.ExitCode -eq 0) {
             Update-Status "Automated disk cleanup completed successfully"
-        }
-        else {
+        } else {
             Update-Status "Disk cleanup completed with exit code: $($process.ExitCode)" "WARN"
         }
-    }
-    catch {
+    } catch {
         Update-Status "Failed to run automated disk cleanup: $($_.Exception.Message)" "ERROR"
     }
 }
 
 function Install-7Zip {
     Install-Software -Name "7-Zip" -Url "https://www.7-zip.org/a/7z2301-x64.exe" -Arguments "/S"
+}
+
+function Install-WinRAR {
+    Install-Software -Name "WinRAR" -Url "https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-623.exe" -Arguments "/S"
 }
 
 function Install-VSCode {
@@ -593,8 +710,12 @@ function Install-Chrome {
     Install-Software -Name "Chrome" -Url "https://dl.google.com/chrome/install/GoogleChromeStandaloneEnterprise64.msi" -Arguments "/quiet /norestart" -FileName "Chrome.msi"
 }
 
-function Install-WinRAR {
-    Install-Software -Name "WinRAR" -Url "https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-623.exe" -Arguments "/S"
+function Install-Spotify {
+    Install-Software -Name "Spotify" -Url "https://download.scdn.co/SpotifySetup.exe" -Arguments "/silent" -FileName "SpotifySetup.exe"
+}
+
+function Install-Steam {
+    Install-Software -Name "Steam" -Url "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe" -Arguments "/S" -FileName "SteamSetup.exe"
 }
 
 function Start-SFCScan {
@@ -602,7 +723,6 @@ function Start-SFCScan {
         Update-Status "Starting System File Checker scan (this may take several minutes)..." "INFO"
         Write-Log "SFC scan initiated" -Level "INFO"
 
-        # Start SFC process in background
         $job = Start-Job -ScriptBlock {
             $process = Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -Wait -PassThru -NoNewWindow -RedirectStandardOutput $env:TEMP\sfc_output.txt
             return @{
@@ -611,7 +731,6 @@ function Start-SFCScan {
             }
         }
 
-        # Update status while job is running
         $elapsed = 0
         while ($job.State -eq "Running") {
             Start-Sleep -Seconds 10
@@ -621,7 +740,6 @@ function Start-SFCScan {
             Update-Status "SFC scan in progress... (${minutes}m ${seconds}s elapsed)" "INFO"
         }
 
-        # Get result and wait for completion
         $result = Receive-Job -Job $job -Wait
         Remove-Job -Job $job
 
@@ -629,7 +747,6 @@ function Start-SFCScan {
         $totalMinutes = [math]::Floor($elapsed / 60)
         $totalSeconds = $elapsed % 60
 
-        # Report results with completion time
         switch ($exitCode) {
             0 {
                 Update-Status "SFC scan completed successfully - no issues found (${totalMinutes}m ${totalSeconds}s)" "SUCCESS"
@@ -649,13 +766,109 @@ function Start-SFCScan {
             }
         }
 
-        # Small delay to show completion message
         Start-Sleep -Seconds 2
 
-    }
-    catch {
+    } catch {
         Update-Status "Failed to run SFC scan: $($_.Exception.Message)" "ERROR"
         Write-Log "SFC scan failed: $($_.Exception.Message)" -Level "ERROR"
+    }
+}
+
+function Start-DISMScan {
+    try {
+        Update-Status "Starting DISM health scan (this may take several minutes)..." "INFO"
+        Write-Log "DISM health scan initiated" -Level "INFO"
+        Update-Status "DISM: Checking Windows image health..." "INFO"
+
+        $checkJob = Start-Job -ScriptBlock {
+            $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/cleanup-image", "/checkhealth" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\dism_check.txt" -RedirectStandardError "$env:TEMP\dism_check_error.txt"
+            return @{
+                ExitCode = $process.ExitCode
+                Output   = if (Test-Path "$env:TEMP\dism_check.txt") { Get-Content "$env:TEMP\dism_check.txt" -Raw } else { "" }
+                Error    = if (Test-Path "$env:TEMP\dism_check_error.txt") { Get-Content "$env:TEMP\dism_check_error.txt" -Raw } else { "" }
+            }
+        }
+
+        $checkResult = Receive-Job -Job $checkJob -Wait
+        Remove-Job -Job $checkJob
+
+        if ($checkResult.ExitCode -eq 0) {
+            Update-Status "DISM: Image health check completed - no issues detected" "SUCCESS"
+            Write-Log "DISM health check completed successfully - no corruption found" -Level "SUCCESS"
+        } else {
+            Update-Status "DISM: Issues detected, proceeding with scan and repair..." "WARN"
+            Write-Log "DISM health check found issues - starting scan and repair" -Level "WARN"
+
+            Update-Status "DISM: Scanning Windows image for corruption..." "INFO"
+            $scanJob = Start-Job -ScriptBlock {
+                $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/cleanup-image", "/scanhealth" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\dism_scan.txt" -RedirectStandardError "$env:TEMP\dism_scan_error.txt"
+                return @{
+                    ExitCode = $process.ExitCode
+                    Output   = if (Test-Path "$env:TEMP\dism_scan.txt") { Get-Content "$env:TEMP\dism_scan.txt" -Raw } else { "" }
+                    Error    = if (Test-Path "$env:TEMP\dism_scan_error.txt") { Get-Content "$env:TEMP\dism_scan_error.txt" -Raw } else { "" }
+                }
+            }
+
+            $elapsed = 0
+            while ($scanJob.State -eq "Running") {
+                Start-Sleep -Seconds 15
+                $elapsed += 15
+                $minutes = [math]::Floor($elapsed / 60)
+                $seconds = $elapsed % 60
+                Update-Status "DISM: Scanning image health... (${minutes}m ${seconds}s elapsed)" "INFO"
+            }
+
+            $scanResult = Receive-Job -Job $scanJob -Wait
+            Remove-Job -Job $scanJob
+
+            if ($scanResult.ExitCode -eq 0) {
+                Update-Status "DISM: Starting image repair process..." "INFO"
+                Write-Log "DISM scan completed - starting repair process" -Level "INFO"
+
+                $repairJob = Start-Job -ScriptBlock {
+                    $process = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/cleanup-image", "/restorehealth" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\dism_repair.txt" -RedirectStandardError "$env:TEMP\dism_repair_error.txt"
+                    return @{
+                        ExitCode = $process.ExitCode
+                        Output   = if (Test-Path "$env:TEMP\dism_repair.txt") { Get-Content "$env:TEMP\dism_repair.txt" -Raw } else { "" }
+                        Error    = if (Test-Path "$env:TEMP\dism_repair_error.txt") { Get-Content "$env:TEMP\dism_repair_error.txt" -Raw } else { "" }
+                    }
+                }
+
+                $repairElapsed = 0
+                while ($repairJob.State -eq "Running") {
+                    Start-Sleep -Seconds 20
+                    $repairElapsed += 20
+                    $minutes = [math]::Floor($repairElapsed / 60)
+                    $seconds = $repairElapsed % 60
+                    Update-Status "DISM: Repairing Windows image... (${minutes}m ${seconds}s elapsed)" "INFO"
+                }
+
+                $repairResult = Receive-Job -Job $repairJob -Wait
+                Remove-Job -Job $repairJob
+
+                $totalMinutes = [math]::Floor(($elapsed + $repairElapsed) / 60)
+                $totalSeconds = ($elapsed + $repairElapsed) % 60
+
+                if ($repairResult.ExitCode -eq 0) {
+                    Update-Status "DISM: Image repair completed successfully (${totalMinutes}m ${totalSeconds}s)" "SUCCESS"
+                    Write-Log "DISM repair completed successfully in ${totalMinutes}m ${totalSeconds}s" -Level "SUCCESS"
+                } else {
+                    Update-Status "DISM: Repair completed with warnings (${totalMinutes}m ${totalSeconds}s)" "WARN"
+                    Write-Log "DISM repair completed with exit code: $($repairResult.ExitCode) in ${totalMinutes}m ${totalSeconds}s" -Level "WARN"
+                }
+            } else {
+                Update-Status "DISM: Scan failed with exit code: $($scanResult.ExitCode)" "ERROR"
+                Write-Log "DISM scan failed with exit code: $($scanResult.ExitCode)" -Level "ERROR"
+            }
+        }
+
+        @("$env:TEMP\dism_check.txt", "$env:TEMP\dism_check_error.txt", "$env:TEMP\dism_scan.txt", "$env:TEMP\dism_scan_error.txt", "$env:TEMP\dism_repair.txt", "$env:TEMP\dism_repair_error.txt") | ForEach-Object {
+            if (Test-Path $_) { Remove-Item $_ -Force -ErrorAction SilentlyContinue }
+        }
+
+    } catch {
+        Update-Status "Failed to run DISM scan: $($_.Exception.Message)" "ERROR"
+        Write-Log "DISM scan failed: $($_.Exception.Message)" -Level "ERROR"
     }
 }
 
@@ -663,50 +876,19 @@ function Clear-DNSCache {
     try {
         Clear-DnsClientCache
         Update-Status "DNS cache flushed successfully"
-    }
-    catch {
+    } catch {
         Update-Status "Failed to flush DNS cache: $($_.Exception.Message)" "ERROR"
     }
 }
 
-function Start-RegistryEditor {
-    try {
-        Start-Process regedit.exe
-        Update-Status "Registry Editor opened - use with caution!"
-    }
-    catch {
-        Update-Status "Failed to open Registry Editor: $($_.Exception.Message)" "ERROR"
-    }
-}
+function Invoke-CustomMaintenance {
+    param([string]$PersonName)
 
-function Start-AdminCMD {
     try {
-        Start-Process cmd.exe -Verb RunAs
-        Update-Status "Admin Command Prompt opened"
-    }
-    catch {
-        Update-Status "Failed to open Admin Command Prompt: $($_.Exception.Message)" "ERROR"
-    }
-}
-
-function Start-AdminPowerShell {
-    try {
-        Start-Process powershell.exe -Verb RunAs
-        Update-Status "Admin PowerShell opened"
-    }
-    catch {
-        Update-Status "Failed to open Admin PowerShell: $($_.Exception.Message)" "ERROR"
-    }
-}
-
-function Invoke-YureiMaintenance {
-    try {
-        Update-Status "Yurei's custom maintenance is starting..." "INFO"
-        Write-Log "Starting Yurei's personalized system cleanup routine." -Level "INFO"
+        Update-Status "$PersonName's custom maintenance is starting..." "INFO"
+        Write-Log "Starting $PersonName's personalized system cleanup routine." -Level "INFO"
 
         Update-Status "Phase 1/4: Starting quick cleanup tasks..." "INFO"
-        Write-Log "Phase 1: Quick cleanup tasks..." -Level "INFO"
-
         Clear-TempFiles
         Clear-BrowserCache
         Clear-DNSCache
@@ -714,88 +896,23 @@ function Invoke-YureiMaintenance {
         Clear-VRChatData
         Clear-RecycleBin
 
-        Update-Status "Phase 1 complete - proceeding to system scans..." "SUCCESS"
-        Write-Log "Phase 1 completed successfully" -Level "SUCCESS"
-
         Update-Status "Phase 2/4: Starting comprehensive system scans..." "INFO"
-        Write-Log "Phase 2: System integrity scans..." -Level "INFO"
-
         Start-SFCScan
 
-        Update-Status "Phase 2 complete - proceeding to hardware analysis..." "SUCCESS"
-        Write-Log "Phase 2 completed successfully" -Level "SUCCESS"
-
         Update-Status "Phase 3/4: Starting driver analysis..." "INFO"
-        Write-Log "Phase 3: Hardware and driver analysis..." -Level "INFO"
-
         Start-DriverCheck
 
-        Update-Status "Phase 3 complete - proceeding to final cleanup..." "SUCCESS"
-        Write-Log "Phase 3 completed successfully" -Level "SUCCESS"
-
         Update-Status "Phase 4/4: Starting final system cleanup..." "INFO"
-        Write-Log "Phase 4: Final system cleanup..." -Level "INFO"
-
         Start-DiskCleanup
 
-        Update-Status "All phases complete! Yurei's maintenance finished successfully!" "SUCCESS"
-        Write-Log "All maintenance tasks completed! Yurei's system is now optimized and ready." -Level "SUCCESS"
-
-    }
-    catch {
-        Update-Status "Yurei's maintenance failed: $($_.Exception.Message)" "ERROR"
-        Write-Log "Yurei's maintenance routine encountered an error: $($_.Exception.Message)" -Level "ERROR"
+        Update-Status "All phases complete! $PersonName's maintenance finished successfully!" "SUCCESS"
+    } catch {
+        Update-Status "$PersonName's maintenance failed: $($_.Exception.Message)" "ERROR"
     }
 }
 
-function Invoke-MystMaintenance {
-    try {
-        Update-Status "Myst's custom maintenance is starting..." "INFO"
-        Write-Log "Starting Myst's personalized system cleanup routine." -Level "INFO"
-
-        Update-Status "Phase 1/4: Starting quick cleanup tasks..." "INFO"
-        Write-Log "Phase 1: Quick cleanup tasks..." -Level "INFO"
-
-        Clear-TempFiles
-        Clear-BrowserCache
-        Clear-DNSCache
-        Reset-NetworkStack
-        Clear-VRChatData
-        Clear-RecycleBin
-
-        Update-Status "Phase 1 complete - proceeding to system scans..." "SUCCESS"
-        Write-Log "Phase 1 completed successfully" -Level "SUCCESS"
-
-        Update-Status "Phase 2/4: Starting comprehensive system scans..." "INFO"
-        Write-Log "Phase 2: System integrity scans..." -Level "INFO"
-
-        Start-SFCScan
-
-        Update-Status "Phase 2 complete - proceeding to hardware analysis..." "SUCCESS"
-        Write-Log "Phase 2 completed successfully" -Level "SUCCESS"
-
-        Update-Status "Phase 3/4: Starting driver analysis..." "INFO"
-        Write-Log "Phase 3: Hardware and driver analysis..." -Level "INFO"
-
-        Start-DriverCheck
-
-        Update-Status "Phase 3 complete - proceeding to final cleanup..." "SUCCESS"
-        Write-Log "Phase 3 completed successfully" -Level "SUCCESS"
-
-        Update-Status "Phase 4/4: Starting final system cleanup..." "INFO"
-        Write-Log "Phase 4: Final system cleanup..." -Level "INFO"
-
-        Start-DiskCleanup
-
-        Update-Status "All phases complete! Myst's maintenance finished successfully!" "SUCCESS"
-        Write-Log "All maintenance tasks completed! Myst's system is now optimized and ready." -Level "SUCCESS"
-
-    }
-    catch {
-        Update-Status "Myst's maintenance failed: $($_.Exception.Message)" "ERROR"
-        Write-Log "Myst's maintenance routine encountered an error: $($_.Exception.Message)" -Level "ERROR"
-    }
-}
+function Invoke-YureiMaintenance { Invoke-CustomMaintenance -PersonName "Yurei" }
+function Invoke-MystMaintenance { Invoke-CustomMaintenance -PersonName "Myst" }
 
 function Start-Debloat {
     Update-Status "Checking removable packages..." "INFO"
@@ -854,14 +971,12 @@ function Start-Debloat {
                     Update-Status "Removed: $($package.Name)" "SUCCESS"
                     Write-Log "Removed: $($package.Name)" -Level "SUCCESS"
                     $removed++
-                }
-                catch {
+                } catch {
                     Update-Status "Failed to remove: $($package.Name) - $($_.Exception.Message)" "ERROR"
                     Write-Log "Failed to remove: $($package.Name) - $($_.Exception.Message)" -Level "ERROR"
                 }
             }
-        }
-        else {
+        } else {
             Update-Status "Not found: $app" "INFO"
             Write-Log "Not found: $app" -Level "INFO"
             $notFound++
@@ -873,15 +988,12 @@ function Start-Debloat {
     Write-Log "Debloat summary: $summary" -Level "SUCCESS"
 }
 
-# ================================
-# Driver Analysis Function
-# ================================
+# Code 28 = Device doesn't have drivers installed // Other error codes indicate driver problems
 function Start-DriverCheck {
     try {
         Update-Status "Starting comprehensive driver analysis..." "INFO"
         Write-Log "Scanning Device Manager for driver issues..." -Level "INFO"
 
-        # Get all PnP devices
         $allDevices = Get-WmiObject -Class Win32_PnPEntity -ErrorAction SilentlyContinue
 
         if (!$allDevices) {
@@ -889,30 +1001,21 @@ function Start-DriverCheck {
             return
         }
 
-        # Initialize counters
         $unknownDevices = @()
         $problemDevices = @()
         $workingDevices = @()
 
-        # Analyze each device
         foreach ($device in $allDevices) {
             if ($device.ConfigManagerErrorCode -eq 28) {
-                # Code 28 = Device doesn't have drivers installed
                 $unknownDevices += $device
-            }
-            elseif ($device.ConfigManagerErrorCode -ne 0) {
-                # Other error codes indicate driver problems
+            } elseif ($device.ConfigManagerErrorCode -ne 0) {
                 $problemDevices += $device
-            }
-            elseif ($device.Status -eq "OK") {
+            } elseif ($device.Status -eq "OK") {
                 $workingDevices += $device
             }
         }
-
-        # Report comprehensive results
         Write-Log "Found $($allDevices.Count) total devices, $($unknownDevices.Count) unknown, $($problemDevices.Count) with issues" -Level "INFO"
 
-        # Log detailed findings
         if ($unknownDevices.Count -gt 0) {
             Write-Log "Found $($unknownDevices.Count) unknown devices (no drivers)" -Level "WARN"
         }
@@ -925,52 +1028,47 @@ function Start-DriverCheck {
         if ($unknownDevices.Count -eq 0 -and $problemDevices.Count -eq 0) {
             Update-Status "Driver analysis complete - all device drivers are working correctly!" "SUCCESS"
             Write-Log "Driver analysis completed - all drivers functioning properly" -Level "SUCCESS"
-        }
-        else {
+        } else {
             Update-Status "Driver analysis complete - found $($unknownDevices.Count + $problemDevices.Count) driver issues" "WARN"
             Write-Log "Driver analysis completed with issues found" -Level "WARN"
         }
 
-    }
-    catch {
+    } catch {
         Update-Status "Failed to analyze drivers: $($_.Exception.Message)" "ERROR"
         Write-Log "Driver analysis failed: $($_.Exception.Message)" -Level "ERROR"
     }
 }
 
-#===========================================================================
-# Button Configuration
-#===========================================================================
-
 $script:ButtonConfig = @(
+    @{ Name = "Empty Recycle Bin"; Description = "Permanently deletes all items in Recycle Bin"; Action = "Clear-RecycleBin"; Category = "Cleanup"; Icon = "[BIN]" },
     @{ Name = "Clear Temp Files"; Description = "Comprehensive cleanup of temporary files and caches"; Action = "Clear-TempFiles"; Category = "Cleanup"; Icon = "[DEL]" },
     @{ Name = "Clear Browser Cache"; Description = "Removes cache files from all major browsers"; Action = "Clear-BrowserCache"; Category = "Cleanup"; Icon = "[WEB]" },
-    @{ Name = "Empty Recycle Bin"; Description = "Permanently deletes all items in Recycle Bin"; Action = "Clear-RecycleBin"; Category = "Cleanup"; Icon = "[BIN]" },
+    @{ Name = "Clear Spotify Cache"; Description = "Clears Spotify cache and temporary data"; Action = "Clear-SpotifyCache"; Category = "Cleanup"; Icon = "[SPT]" },
+    @{ Name = "Clear Steam Cache"; Description = "Clears Steam cache, logs, and temporary files"; Action = "Clear-SteamCache"; Category = "Cleanup"; Icon = "[STM]" },
 
     @{ Name = "Install 7-Zip"; Description = "Downloads and installs 7-Zip file archiver"; Action = "Install-7Zip"; Category = "Install"; Icon = "[ZIP]" },
     @{ Name = "Install VS Code"; Description = "Downloads and installs Visual Studio Code editor"; Action = "Install-VSCode"; Category = "Install"; Icon = "[IDE]" },
     @{ Name = "Install Chrome"; Description = "Downloads and installs Google Chrome browser"; Action = "Install-Chrome"; Category = "Install"; Icon = "[CHR]" },
     @{ Name = "Install WinRAR"; Description = "Downloads and installs WinRAR file archiver"; Action = "Install-WinRAR"; Category = "Install"; Icon = "[RAR]" },
+    @{ Name = "Install Spotify"; Description = "Downloads and installs Spotify music player"; Action = "Install-Spotify"; Category = "Install"; Icon = "[SPT]" },
+    @{ Name = "Install Steam"; Description = "Downloads and installs Steam gaming platform"; Action = "Install-Steam"; Category = "Install"; Icon = "[STM]" },
 
     @{ Name = "System File Checker"; Description = "Runs SFC scan to check system file integrity"; Action = "Start-SFCScan"; Category = "System"; Icon = "[SFC]" },
-    @{ Name = "Network Reset"; Description = "Resets network stack and TCP/IP configuration"; Action = "Reset-NetworkStack"; Category = "System"; Icon = "[NET]" },
+    @{ Name = "DISM Health Scan"; Description = "Scans and repairs Windows system image corruption"; Action = "Start-DISMScan"; Category = "System"; Icon = "[DISM]" },
+    @{ Name = "Driver Check"; Description = "Scans for missing or problematic device drivers"; Action = "Start-DriverCheck"; Category = "System"; Icon = "[DRV]" },
     @{ Name = "Flush DNS Cache"; Description = "Clears DNS resolver cache"; Action = "Clear-DNSCache"; Category = "System"; Icon = "[DNS]" },
+    @{ Name = "Network Reset"; Description = "Resets network stack and TCP/IP configuration"; Action = "Reset-NetworkStack"; Category = "System"; Icon = "[NET]" },
+    @{ Name = "Disk Cleanup Tool"; Description = "Opens Windows built-in Disk Cleanup utility"; Action = "Start-DiskCleanup"; Category = "System"; Icon = "[DSK]" },
+    @{ Name = "Debloat System"; Description = "Removes unnecessary Windows bloatware"; Action = "Start-Debloat"; Category = "System"; Icon = "[DBLT]" },
 
     @{ Name = "Clear VRChat Data"; Description = "Clears VRChat cache, logs, and temporary data"; Action = "Clear-VRChatData"; Category = "Games"; Icon = "[VRC]" },
+    @{ Name = "Remove VRChat Registry"; Description = "Removes VRChat registry keys and startup entries"; Action = "Remove-VRChatRegistry"; Category = "Games"; Icon = "[VRC]" },
 
     @{ Name = "Yurei"; Description = "For Yurei"; Action = "Invoke-YureiMaintenance"; Category = "Custom"; Icon = "[TEST]" },
-    @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" },
-    @{ Name = "Debloat System"; Description = "Removes unnecessary Windows bloatware"; Action = "Start-Debloat"; Category = "Custom"; Icon = "[TEST]" },
-
-    @{ Name = "Disk Cleanup Tool"; Description = "Opens Windows built-in Disk Cleanup utility"; Action = "Start-DiskCleanup"; Category = "Advanced"; Icon = "[DSK]" },
-    @{ Name = "Registry Editor"; Description = "Opens Windows Registry Editor (use with caution)"; Action = "Start-RegistryEditor"; Category = "Advanced"; Icon = "[REG]" },
-    @{ Name = "Admin Command Prompt"; Description = "Opens elevated Command Prompt"; Action = "Start-AdminCMD"; Category = "Advanced"; Icon = "[CMD]" },
-    @{ Name = "Admin PowerShell"; Description = "Opens elevated PowerShell console"; Action = "Start-AdminPowerShell"; Category = "Advanced"; Icon = "[PS1]" }
+    @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" }
 )
 
-#===========================================================================
-# XAML Interface
-#===========================================================================
+$script:ButtonCount = $script:ButtonConfig.Count
 
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -987,18 +1085,19 @@ $xaml = @'
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="6">
+                                CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                            Margin="{TemplateBinding Padding}"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#1E1E1E"/>
+                                <Setter Property="Background" Value="#4A4A52"/>
                                 <Setter Property="BorderBrush" Value="#64B5F6"/>
                                 <Setter Property="BorderThickness" Value="2"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#1E1E1E"/>
+                                <Setter Property="Background" Value="#52525A"/>
                                 <Setter Property="BorderBrush" Value="#64B5F6"/>
                                 <Setter Property="BorderThickness" Value="2"/>
                             </Trigger>
@@ -1010,13 +1109,6 @@ $xaml = @'
 
         <Style x:Key="TabStyle" TargetType="Border">
             <Setter Property="Cursor" Value="Hand"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#1E1E1E"/>
-                    <Setter Property="BorderBrush" Value="#64B5F6"/>
-                    <Setter Property="BorderThickness" Value="2"/>
-                </Trigger>
-            </Style.Triggers>
         </Style>
 
         <Style x:Key="ModernScrollViewerStyle" TargetType="ScrollViewer">
@@ -1028,7 +1120,7 @@ $xaml = @'
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <ScrollContentPresenter Grid.Column="0" Content="{TemplateBinding Content}"/>
+                            <ScrollContentPresenter Grid.Column="0"/>
                             <ScrollBar Grid.Column="1" Name="PART_VerticalScrollBar"
                                     Value="{TemplateBinding VerticalOffset}"
                                     Maximum="{TemplateBinding ScrollableHeight}"
@@ -1076,6 +1168,12 @@ $xaml = @'
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="StandardBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="CornerRadius" Value="8"/>
+        </Style>
     </Window.Resources>
 
     <Border BorderBrush="#3F3F46" BorderThickness="2" Background="#1E1E1E">
@@ -1086,27 +1184,26 @@ $xaml = @'
                 <RowDefinition Height="40"/>
             </Grid.RowDefinitions>
 
-            <Border Name="DragArea" Grid.Row="0" Background="#1E1E1E" BorderBrush="#3F3F46" BorderThickness="0,0,0,1">
-                <Grid Margin="25,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                    <Border Name="DragArea" Grid.Row="0" Background="#1E1E1E" BorderBrush="#3F3F46" BorderThickness="0,0,0,1">
+                        <Grid Margin="25,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Center">
                         <TextBlock Text="MystUtil" FontSize="24" FontWeight="Bold"
                                 Foreground="#64B5F6" FontFamily="Segoe UI"/>
-                        <TextBlock Text="A System Optimization Tool" FontSize="11"
+                        <TextBlock Text="A System Optimization Tool" FontSize="11" FontWeight="Bold"
                                 Foreground="White" FontFamily="Segoe UI"/>
                     </StackPanel>
 
                     <Border Grid.Column="1" Background="#1E1E1E" CornerRadius="8" BorderBrush="#3F3F46"
                             BorderThickness="1" Margin="20,0" Width="280" Height="38">
-                        <TextBox Name="SearchBox" Background="Transparent" Foreground="#CCCCCC" BorderThickness="0"
+                        <TextBox Name="SearchBox" Background="Transparent" Foreground="#64B5F6" BorderThickness="0"
                                 VerticalContentAlignment="Center" FontSize="13" Text="Search tools..."
-                                Padding="15,0" FontFamily="Segoe UI" CaretBrush="#1E1E1E"/>
+                                Padding="15,0" FontFamily="Segoe UI" CaretBrush="#64B5F6"/>
                     </Border>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="15,0">
@@ -1122,38 +1219,28 @@ $xaml = @'
                             <TextBlock Text="Custom" Foreground="White" FontSize="12" FontWeight="SemiBold"
                                     HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"/>
                         </Border>
-                        <Border Name="OtherTabBorder" Background="#1E1E1E" CornerRadius="8"
-                                BorderBrush="#64B5F6" BorderThickness="0" Style="{StaticResource TabStyle}"
-                                Width="100" Height="38">
-                            <TextBlock Text="Advanced" Foreground="White" FontSize="13" FontWeight="SemiBold"
-                                    HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"/>
+
+                        <Border Name="CloseButtonBorder" Background="#1E1E1E" CornerRadius="8"
+                                BorderBrush="#64B5F6" BorderThickness="2"
+                                Width="45" Height="38" Margin="20,0,0,0" Style="{StaticResource CloseButtonStyle}">
+                            <TextBlock Text="✕" Foreground="#64B5F6" FontSize="16" FontWeight="Bold"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    FontFamily="Segoe UI" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
                         </Border>
                     </StackPanel>
-
-                    <Border Grid.Column="3" Name="CloseButtonBorder" Background="#1E1E1E" CornerRadius="8"
-                            BorderBrush="#64B5F6" BorderThickness="2"
-                            Width="45" Height="38" Margin="20,0,0,0" Style="{StaticResource CloseButtonStyle}">
-                    <TextBlock Text="X" Foreground="#64B5F6" FontSize="16" FontWeight="Bold"
-                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                            FontFamily="Segoe UI" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"/>
-                    </Border>
                 </Grid>
             </Border>
 
             <ScrollViewer Name="MainScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto"
                         HorizontalScrollBarVisibility="Disabled"
-                        Margin="30" Background="#1E1E1E" Style="{StaticResource ModernScrollViewerStyle}">
-                <Border Background="#1E1E1E" Padding="30,5,30,15">
-                    <Grid Name="MainContentGrid">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="25"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-
-                        <StackPanel Name="LeftButtonContainer" Grid.Column="0" VerticalAlignment="Top"/>
-                        <StackPanel Name="RightButtonContainer" Grid.Column="2" VerticalAlignment="Top"/>
-                    </Grid>
+                        Margin="40" Background="#1E1E1E" Style="{StaticResource ModernScrollViewerStyle}">
+                <Border Background="#1E1E1E" Padding="40,20,40,30">
+                <Grid Name="MainContentGrid">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Name="LeftButtonContainer" VerticalAlignment="Top"/>
+                </Grid>
                 </Border>
             </ScrollViewer>
 
@@ -1164,11 +1251,11 @@ $xaml = @'
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Name="StatusText" Grid.Column="0" Text="Ready" Foreground="White"
-                            VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI"/>
+                    <TextBlock Name="StatusText" Grid.Column="0" Text="" Foreground="#64B5F6"
+                            VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI" FontWeight="Bold"/>
 
-                    <TextBlock Grid.Column="1" Text="v2.2 | Running as Administrator" Foreground="#888888"
-                            VerticalAlignment="Center" FontSize="10" FontFamily="Segoe UI"/>
+                    <TextBlock Grid.Column="1" Text="version: 4.3.2" Foreground="#64B5F6"
+                            VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI" FontWeight="Bold"/>
                 </Grid>
             </Border>
         </Grid>
@@ -1176,23 +1263,19 @@ $xaml = @'
 </Window>
 '@
 
-#===========================================================================
-# UI Functions
-#===========================================================================
-
 function New-CategoryHeader {
     [CmdletBinding()]
     param([string]$CategoryName)
 
     $header = New-Object System.Windows.Controls.TextBlock
     $header.Text = $CategoryName
-    $header.FontSize = 15
-    $header.FontWeight = "SemiBold"
+    $header.FontSize = 16
+    $header.FontWeight = "Bold"
     $header.FontFamily = "Segoe UI"
-    $header.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
+    $header.Foreground = $script:BlueColor
     $header.HorizontalAlignment = "Left"
-    $header.Margin = "0,0,0,15"
-    $header.Padding = "0,8,0,0"
+    $header.Margin = "0,25,0,20"
+    $header.Padding = "0,12,0,8"
 
     return $header
 }
@@ -1203,21 +1286,20 @@ function New-Button {
         [string]$Name,
         [string]$Description,
         [string]$Action,
-        [string]$Category,
         [string]$Icon = "[?]"
     )
 
     $button = New-Object System.Windows.Controls.Button
-    $button.Height = 50
-    $button.Margin = "0,6,0,0"
-    $button.Padding = "15,10"
+    $button.Height = 65
+    $button.Margin = "0,8,0,0"
+    $button.Padding = "20,12"
     $button.HorizontalAlignment = "Stretch"
     $button.HorizontalContentAlignment = "Left"
     $button.ToolTip = $Description
     $button.Style = $script:sync.Window.Resources["ModernButtonStyle"]
-    $button.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(40, 40, 45))
+    $button.Background = $script:DarkColor
     $button.Foreground = [System.Windows.Media.Brushes]::White
-    $button.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(70, 70, 70))
+    $button.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(75, 75, 75))
     $button.BorderThickness = "1"
     $button.Cursor = "Hand"
 
@@ -1225,23 +1307,22 @@ function New-Button {
     $content.Orientation = "Horizontal"
     $content.VerticalAlignment = "Center"
 
-    # Create icon container
     $iconContainer = New-Object System.Windows.Controls.Border
-    $iconContainer.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(30, 30, 30))
-    $iconContainer.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
-    $iconContainer.BorderThickness = "1"
-    $iconContainer.CornerRadius = "4"
-    $iconContainer.Width = 32
-    $iconContainer.Height = 32
-    $iconContainer.Margin = "5,0,12,0"
+    $iconContainer.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(28, 28, 30))
+    $iconContainer.BorderBrush = $script:BlueColor
+    $iconContainer.BorderThickness = "1.5"
+    $iconContainer.CornerRadius = "6"
+    $iconContainer.Width = 38
+    $iconContainer.Height = 38
+    $iconContainer.Margin = "8,0,18,0"
     $iconContainer.VerticalAlignment = "Center"
 
     $iconText = New-Object System.Windows.Controls.TextBlock
     $iconText.Text = $Icon.Trim('[', ']')
-    $iconText.FontSize = 11
+    $iconText.FontSize = 12
     $iconText.FontFamily = "Segoe UI"
     $iconText.FontWeight = "Bold"
-    $iconText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
+    $iconText.Foreground = $script:BlueColor
     $iconText.HorizontalAlignment = "Center"
     $iconText.VerticalAlignment = "Center"
     $iconText.TextAlignment = "Center"
@@ -1250,21 +1331,23 @@ function New-Button {
 
     $textContent = New-Object System.Windows.Controls.StackPanel
     $textContent.Orientation = "Vertical"
+    $textContent.VerticalAlignment = "Center"
 
     $nameText = New-Object System.Windows.Controls.TextBlock
     $nameText.Text = $Name
-    $nameText.FontSize = 13
+    $nameText.FontSize = 14
     $nameText.FontFamily = "Segoe UI"
     $nameText.FontWeight = "SemiBold"
     $nameText.VerticalAlignment = "Center"
+    $nameText.Margin = "0,0,0,4"
 
     $descText = New-Object System.Windows.Controls.TextBlock
     $descText.Text = $Description
-    $descText.FontSize = 10
+    $descText.FontSize = 11
     $descText.FontFamily = "Segoe UI"
-    $descText.Foreground = [System.Windows.Media.Brushes]::LightGray
+    $descText.Foreground = $script:GrayColor
     $descText.TextWrapping = "Wrap"
-    $descText.Margin = "0,2,0,0"
+    $descText.LineHeight = 16
 
     $textContent.Children.Add($nameText) | Out-Null
     $textContent.Children.Add($descText) | Out-Null
@@ -1273,15 +1356,13 @@ function New-Button {
     $content.Children.Add($textContent) | Out-Null
     $button.Content = $content
 
-    # Store action and add click event
     $button.Tag = $Action
     $button.Add_Click({
             try {
                 $actionName = $this.Tag
                 Update-Status "Executing: $Name"
                 & $actionName
-            }
-            catch {
+            } catch {
                 Update-Status "Error executing $Name`: $($_.Exception.Message)" "ERROR"
             }
         })
@@ -1294,68 +1375,63 @@ function Show-Buttons {
     param([string]$Filter = "")
 
     $script:sync.LeftButtonContainer.Children.Clear()
-    $script:sync.RightButtonContainer.Children.Clear()
 
-    $buttons = $script:ButtonConfig | ForEach-Object {
-        [PSCustomObject]@{
-            Name        = $_.Name
-            Description = $_.Description
-            Action      = $_.Action
-            Category    = if ($_.Category) { $_.Category } else { "Uncategorized" }
-            Icon        = $_.Icon
-        }
-    }
+    $buttons = $script:ButtonConfig | Where-Object {
+        ($script:sync.CurrentFilter -contains $_.Category) -and
+        ([string]::IsNullOrWhiteSpace($Filter) -or $Filter -eq "Search tools..." -or
+        $_.Name -eq $Filter -or $_.Description -eq $Filter -or
+        $_.Name -like "*$Filter*" -or $_.Description -like "*$Filter*"
+    ) }
 
-    if ($script:sync.CurrentFilter -and $script:sync.CurrentFilter.Count -gt 0) {
-        $buttons = $buttons | Where-Object { $_.Category -in $script:sync.CurrentFilter }
-    }
+    if ($buttons.Count -eq 0) {
+        $noButtonsText = New-Object System.Windows.Controls.TextBlock
+        $noButtonsText.Text = if ($Filter -and $Filter -ne "Search tools...") { "No tools found matching '$Filter'" } else { "No tools available in this category" }
+        $noButtonsText.FontSize = 16
+        $noButtonsText.Foreground = [System.Windows.Media.Brushes]::Gray
+        $noButtonsText.HorizontalAlignment = "Center"
+        $noButtonsText.VerticalAlignment = "Center"
+        $noButtonsText.Margin = "20"
 
-    if ($Filter) {
-        $buttons = $buttons | Where-Object {
-            $_.Name -like "*$Filter*" -or $_.Description -like "*$Filter*" -or $_.Category -like "*$Filter*"
-        }
-    }
-
-    if (!$buttons) {
-        $noResults = New-Object System.Windows.Controls.TextBlock
-        $noResults.Text = if ($Filter) { "No results found for: '$Filter'" } else { "No tools available in this category" }
-        $noResults.FontSize = 16
-        $noResults.Foreground = [System.Windows.Media.Brushes]::Gray
-        $noResults.HorizontalAlignment = "Center"
-        $noResults.Margin = "0,80,0,0"
-        $noResults.FontFamily = "Segoe UI"
-        $script:sync.LeftButtonContainer.Children.Add($noResults) | Out-Null
+        $script:sync.LeftButtonContainer.Children.Add($noButtonsText) | Out-Null
         return
     }
 
-    # Group buttons by category and alternate containers
-    $categories = $buttons | Group-Object Category | Sort-Object Name
-    $leftColumn = $true
+    $groupedButtons = @{}
+    $categoryOrder = @()
 
-    foreach ($category in $categories) {
-        $container = if ($leftColumn) { $script:sync.LeftButtonContainer } else { $script:sync.RightButtonContainer }
-
-        # Create and add category header
-        $catName = if ($category.Name -ne "") { $category.Name } else { "Uncategorized" }
-        $header = New-CategoryHeader -CategoryName $catName
-
-        # First category in each column gets no top margin for alignment
-        if ($container.Children.Count -eq 0) {
-            $header.Margin = "0,0,0,15"
+    foreach ($button in $buttons) {
+        if (-not $groupedButtons.ContainsKey($button.Category)) {
+            $groupedButtons[$button.Category] = @()
+            $categoryOrder += $button.Category
         }
-        else {
-            $header.Margin = "0,25,0,15"
+        $groupedButtons[$button.Category] += $button
+    }
+
+    $categoryPriority = @{
+        "Cleanup" = 1
+        "Install" = 2
+        "System"  = 3
+        "Games"   = 4
+        "Custom"  = 5
+    }
+
+    $categoryOrder = $categoryOrder | Sort-Object {
+        if ($categoryPriority.ContainsKey($_)) {
+            $categoryPriority[$_]
+        } else {
+            999
         }
+    }
 
-        $container.Children.Add($header) | Out-Null
-
-        # Add buttons for this category
-        $category.Group | Sort-Object Name | ForEach-Object {
-            $btn = New-Button -Name $_.Name -Description $_.Description -Action $_.Action -Category $_.Category -Icon $_.Icon
-            $container.Children.Add($btn) | Out-Null
+    foreach ($category in $categoryOrder) {
+        $categoryButtons = $groupedButtons[$category]
+        $categoryButtons = $categoryButtons | Sort-Object Name
+        $header = New-CategoryHeader -CategoryName $category
+        $script:sync.LeftButtonContainer.Children.Add($header) | Out-Null
+        foreach ($config in $categoryButtons) {
+            $button = New-Button -Name $config.Name -Description $config.Description -Action $config.Action -Icon $config.Icon
+            $script:sync.LeftButtonContainer.Children.Add($button) | Out-Null
         }
-
-        $leftColumn = !$leftColumn
     }
 }
 
@@ -1365,44 +1441,29 @@ function Set-ActiveTab {
 
     $mainTab = $script:sync.Window.FindName("MainTabBorder")
     $customTab = $script:sync.Window.FindName("CustomTabBorder")
-    $otherTab = $script:sync.Window.FindName("OtherTabBorder")
     $activeColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
     $inactiveColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(30, 30, 30))
     $blueBorderColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
 
-    # Reset all tabs to inactive
     $mainTab.Background = $inactiveColor
     $mainTab.BorderBrush = $blueBorderColor
     $customTab.Background = $inactiveColor
     $customTab.BorderBrush = $blueBorderColor
-    $otherTab.Background = $inactiveColor
-    $otherTab.BorderBrush = $blueBorderColor
 
     if ($TabName -eq "Main") {
         $mainTab.Background = $activeColor
         $mainTab.BorderBrush = $activeColor
-        $script:sync.CurrentFilter = @("Cleanup", "Install", "System", "Games", "Extras")
-    }
-    elseif ($TabName -eq "Custom") {
+        $script:sync.CurrentFilter = @("Cleanup", "Install", "System", "Games")
+    } elseif ($TabName -eq "Custom") {
         $customTab.Background = $activeColor
         $customTab.BorderBrush = $activeColor
         $script:sync.CurrentFilter = @("Custom")
-    }
-    elseif ($TabName -eq "Advanced") {
-        $otherTab.Background = $activeColor
-        $otherTab.BorderBrush = $activeColor
-        $script:sync.CurrentFilter = @("Advanced")
     }
 
     Show-Buttons
     $script:sync.Settings.LastTab = $TabName
     Save-Configuration
 }
-
-#===========================================================================
-# Main Application Initialization
-#===========================================================================
-
 function Initialize-UI {
     Write-Log "Initializing UI interface..." -Level "INFO"
 
@@ -1410,27 +1471,34 @@ function Initialize-UI {
         $script:sync.Window = [Windows.Markup.XamlReader]::Load(([System.Xml.XmlNodeReader]([xml]$xaml)))
 
         $script:sync.LeftButtonContainer = $script:sync.Window.FindName("LeftButtonContainer")
-        $script:sync.RightButtonContainer = $script:sync.Window.FindName("RightButtonContainer")
         $script:sync.StatusText = $script:sync.Window.FindName("StatusText")
         $script:sync.SearchBox = $script:sync.Window.FindName("SearchBox")
 
-        # Search functionality
-        $searchTimer = New-Object System.Windows.Threading.DispatcherTimer
-        $searchTimer.Interval = [TimeSpan]::FromMilliseconds(300)
-        $searchTimer.Add_Tick({
+        $script:SearchTimer.Add_Tick({
                 $searchText = $script:sync.SearchBox.Text.Trim()
                 if ($searchText -eq "Search tools..." -or [string]::IsNullOrWhiteSpace($searchText)) {
                     Show-Buttons
-                }
-                else {
+                } else {
                     Show-Buttons -Filter $searchText
                 }
-                $searchTimer.Stop()
+                $script:SearchTimer.Stop()
             })
 
         $script:sync.SearchBox.Add_TextChanged({
-                $searchTimer.Stop()
-                $searchTimer.Start()
+                $script:SearchTimer.Stop()
+                $script:SearchTimer.Start()
+            })
+
+        $script:sync.SearchBox.Add_KeyDown({
+                if ($_.Key -eq "Return") {
+                    $searchText = $script:sync.SearchBox.Text.Trim()
+                    if ($searchText -eq "Search tools..." -or [string]::IsNullOrWhiteSpace($searchText)) {
+                        Show-Buttons
+                    } else {
+                        Show-Buttons -Filter $searchText
+                    }
+                    $_.Handled = $true
+                }
             })
 
         $script:sync.SearchBox.Add_GotFocus({
@@ -1443,17 +1511,15 @@ function Initialize-UI {
         $script:sync.SearchBox.Add_LostFocus({
                 if ([string]::IsNullOrWhiteSpace($this.Text)) {
                     $this.Text = "Search tools..."
-                    $this.Foreground = [System.Windows.Media.Brushes]::Gray
+                    $this.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(100, 181, 246))
                 }
             })
 
-        # Window events
         $script:sync.Window.FindName("DragArea").Add_MouseLeftButtonDown({
                 try {
                     $script:sync.Window.DragMove()
-                }
-                catch {
-                    # Ignore drag errors
+                } catch {
+                    Write-Log "Window drag failed: $($_.Exception.Message)" -Level "DEBUG"
                 }
             })
 
@@ -1469,30 +1535,22 @@ function Initialize-UI {
                 Set-ActiveTab -TabName "Custom"
             })
 
-        $script:sync.Window.FindName("OtherTabBorder").Add_MouseLeftButtonDown({
-                Set-ActiveTab -TabName "Advanced"
-            })
-
         $script:sync.Window.Add_Closing({
                 try {
                     $script:sync.Settings.WindowWidth = [int]$script:sync.Window.ActualWidth
                     $script:sync.Settings.WindowHeight = [int]$script:sync.Window.ActualHeight
                     Save-Configuration
-                }
-                catch {
-                    # Ignore save errors on close
-                }
+                } catch { }
             })
 
         Set-ActiveTab -TabName $script:sync.Settings.LastTab
-        Update-Status "MystUtil ready - $($script:ButtonConfig.Count) tools available"
+        Update-Status "MystUtil ready - $($script:ButtonCount) tools available"
 
         Write-Log "UI initialization completed successfully" -Level "INFO"
 
         $script:sync.Window.ShowDialog() | Out-Null
 
-    }
-    catch {
+    } catch {
         Write-Log "Failed to initialize UI: $($_.Exception.Message)" -Level "ERROR"
         [System.Windows.MessageBox]::Show(
             "Failed to initialize the application interface.`n`nError: $($_.Exception.Message)",
@@ -1504,31 +1562,18 @@ function Initialize-UI {
     }
 }
 
-#===========================================================================
-# Application Entry Point
-#===========================================================================
-
-Write-Log "Starting MystUtil v2.2..." -Level "INFO"
-
+Write-Log "MystUtil - Starting..." -Level "INFO"
 Write-Host ""
 Write-Host ("=" * 70) -ForegroundColor Blue
 Write-Host " MystUtil - A System Optimization Tool" -ForegroundColor Cyan
 Write-Host " https://github.com/LightThemes/mystutil" -ForegroundColor DarkGray
 Write-Host ("=" * 70) -ForegroundColor Blue
-Write-Host ""
-Write-Host " Status: " -ForegroundColor White -NoNewline
-Write-Host "Starting application..." -ForegroundColor Cyan
-Write-Host " Mode:   " -ForegroundColor White -NoNewline
-Write-Host "Administrator privileges active" -ForegroundColor Green
-Write-Host " Time:   " -ForegroundColor White -NoNewline
-Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
-Write-Host ""
-Write-Host ("-" * 70) -ForegroundColor DarkBlue
+Write-Log "Initializing configuration..." -Level "INFO"
+Initialize-Configuration
 
 try {
     Initialize-UI
-}
-catch {
+} catch {
     Write-Log "Application failed to start: $($_.Exception.Message)" -Level "ERROR"
     Write-Host ""
     Write-Host ("=" * 70) -ForegroundColor Red
@@ -1542,10 +1587,3 @@ catch {
     Read-Host
     exit 1
 }
-
-Write-Log "Application closed gracefully" -Level "INFO"
-Write-Host ""
-Write-Host ("=" * 70) -ForegroundColor Blue
-Write-Host " MystUtil closed gracefully" -ForegroundColor Cyan
-Write-Host ("=" * 70) -ForegroundColor Blue
-Write-Host ""
