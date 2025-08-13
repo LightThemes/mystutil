@@ -1,19 +1,9 @@
-﻿#Requires -Version 5.1
-
-param (
+﻿param (
     [switch]$DebugMode,
-    [string]$Config,
-    [switch]$Run,
-    [switch]$NoSingleInstance
+    [string]$Config
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
-$WarningPreference = 'SilentlyContinue'
-
-[System.GC]::Collect()
-[System.GC]::WaitForPendingFinalizers()
-
 Add-Type -AssemblyName PresentationFramework, System.Windows.Forms
 
 $script:sync = [Hashtable]::Synchronized(@{
@@ -21,6 +11,21 @@ $script:sync = [Hashtable]::Synchronized(@{
         ConfigPath   = Join-Path $env:APPDATA "MystUtil"
         SettingsFile = Join-Path $env:APPDATA "MystUtil\settings.json"
     })
+
+. "$PSScriptRoot\core\Logging.ps1"
+
+function Test-WingetAvailable {
+    try {
+        $null = Get-Command winget -ErrorAction Stop
+        $version = winget --version 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "Winget available (version: $version)" -Level "INFO"
+            return $true
+        }
+    } catch { }
+    Write-Log "Winget not available - using fallback methods" -Level "WARN"
+    return $false
+}
 
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $arguments = @()
@@ -45,10 +50,6 @@ if ($Host.Name -eq "ConsoleHost") {
 }
 $Host.UI.RawUI.WindowTitle = "MystUtil (Admin)"
 
-$script:BlueColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
-$script:GrayColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(180, 180, 180))
-$script:DarkColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(42, 42, 47))
-
 $script:SearchTimer = New-Object System.Windows.Threading.DispatcherTimer
 $script:SearchTimer.Interval = [TimeSpan]::FromMilliseconds(300)
 
@@ -67,12 +68,15 @@ function Install-Software {
     [CmdletBinding()]
     param(
         [string]$Name,
-        [string]$WingetId,
-        [string]$FallbackUrl = "",
-        [string]$FallbackArgs = ""
+        [string]$WingetId
     )
 
     Update-Status "Preparing to install $Name..."
+
+    if (!(Test-WingetAvailable)) {
+        Update-Status "Cannot install $Name - winget is not available" "ERROR"
+        return
+    }
 
     try {
         $installed = winget list --id $WingetId --exact 2>$null
@@ -91,45 +95,15 @@ function Install-Software {
         $null = winget install --id $WingetId --exact --silent --accept-package-agreements --accept-source-agreements 2>&1
 
         if ($LASTEXITCODE -eq 0) {
-            Update-Status "$Name installed successfully via winget" "SUCCESS"
-            Write-Log "$Name installation completed via winget" -Level "SUCCESS"
-            return
+            Update-Status "$Name installed successfully" "SUCCESS"
+            Write-Log "$Name installation completed" -Level "SUCCESS"
         } else {
-            Update-Status "Winget installation failed, trying fallback method..." "WARN"
-            Write-Log "Winget failed for $Name (exit code: $LASTEXITCODE), trying fallback" -Level "WARN"
+            Update-Status "$Name installation failed (exit code: $LASTEXITCODE)" "ERROR"
+            Write-Log "$Name installation failed with exit code: $LASTEXITCODE" -Level "ERROR"
         }
     } catch {
-        Update-Status "Winget installation failed: $($_.Exception.Message)" "WARN"
-        Write-Log "Winget installation failed for ${Name}: $($_.Exception.Message)" -Level "WARN"
-    }
-
-    if ($FallbackUrl) {
-        try {
-            Update-Status "Downloading $Name from fallback URL..."
-            $fileName = "$($Name -replace ' ', '_')-installer.exe"
-            $installerPath = Join-Path $env:TEMP $fileName
-
-            $webClient = New-Object System.Net.WebClient
-            $webClient.DownloadFile($FallbackUrl, $installerPath)
-            $webClient.Dispose()
-
-            Update-Status "Installing $Name via direct download..."
-            $process = Start-Process -FilePath $installerPath -ArgumentList $FallbackArgs -PassThru -Wait -WindowStyle Hidden
-
-            if ($process.ExitCode -eq 0) {
-                Update-Status "$Name installed successfully via fallback" "SUCCESS"
-            } else {
-                Update-Status "$Name installation completed with exit code: $($process.ExitCode)" "WARN"
-            }
-
-            Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-
-        } catch {
-            Update-Status "Failed to install $Name via fallback: $($_.Exception.Message)" "ERROR"
-            Write-Log "Fallback installation failed for ${Name}: $($_.Exception.Message)" -Level "ERROR"
-        }
-    } else {
-        Update-Status "No fallback method available for $Name" "ERROR"
+        Update-Status "$Name installation failed: $($_.Exception.Message)" "ERROR"
+        Write-Log "$Name installation failed: $($_.Exception.Message)" -Level "ERROR"
     }
 }
 
@@ -251,27 +225,27 @@ function Clear-VRChatData {
 }
 
 function Install-7Zip {
-    Install-Software -Name "7-Zip" -WingetId "7zip.7zip" -FallbackUrl "https://www.7-zip.org/a/7z2301-x64.exe" -FallbackArgs "/S"
+    Install-Software -Name "7-Zip" -WingetId "7zip.7zip"
 }
 
 function Install-VSCode {
-    Install-Software -Name "VS Code" -WingetId "Microsoft.VisualStudioCode" -FallbackUrl "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -FallbackArgs "/VERYSILENT /NORESTART"
+    Install-Software -Name "VS Code" -WingetId "Microsoft.VisualStudioCode"
 }
 
 function Install-Chrome {
-    Install-Software -Name "Google Chrome" -WingetId "Google.Chrome" -FallbackUrl "https://dl.google.com/chrome/install/GoogleChromeStandaloneEnterprise64.msi" -FallbackArgs "/quiet /norestart"
+    Install-Software -Name "Google Chrome" -WingetId "Google.Chrome"
 }
 
 function Install-WinRAR {
-    Install-Software -Name "WinRAR" -WingetId "RARLab.WinRAR" -FallbackUrl "https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-623.exe" -FallbackArgs "/S"
+    Install-Software -Name "WinRAR" -WingetId "RARLab.WinRAR"
 }
 
 function Install-Spotify {
-    Install-Software -Name "Spotify" -WingetId "Spotify.Spotify" -FallbackUrl "https://download.scdn.co/SpotifySetup.exe" -FallbackArgs "/silent"
+    Install-Software -Name "Spotify" -WingetId "Spotify.Spotify"
 }
 
 function Install-Steam {
-    Install-Software -Name "Steam" -WingetId "Valve.Steam" -FallbackUrl "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe" -FallbackArgs "/S"
+    Install-Software -Name "Steam" -WingetId "Valve.Steam"
 }
 
 function Start-SFCScan {
@@ -652,7 +626,7 @@ $xaml = @'
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Name="LeftButtonContainer" VerticalAlignment="Top"/>
+                        <StackPanel Name="ButtonContainer" VerticalAlignment="Top"/>
                     </Grid>
                 </Border>
             </ScrollViewer>
@@ -685,7 +659,7 @@ function New-CategoryHeader {
     $header.FontSize = 16
     $header.FontWeight = "Bold"
     $header.FontFamily = "Segoe UI"
-    $header.Foreground = $script:BlueColor
+    $header.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
     $header.HorizontalAlignment = "Left"
     $header.Margin = "0,25,0,20"
     $header.Padding = "0,12,0,8"
@@ -698,7 +672,7 @@ function New-Button {
     param(
         [string]$Name,
         [string]$Description,
-        [string]$Action,
+        $Action,
         [string]$Icon = "[?]"
     )
 
@@ -710,7 +684,7 @@ function New-Button {
     $button.HorizontalContentAlignment = "Left"
     $button.ToolTip = $Description
     $button.Style = $script:sync.Window.Resources["ModernButtonStyle"]
-    $button.Background = $script:DarkColor
+    $button.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(42, 42, 47))
     $button.Foreground = [System.Windows.Media.Brushes]::White
     $button.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(75, 75, 75))
     $button.BorderThickness = "1"
@@ -722,7 +696,7 @@ function New-Button {
 
     $iconContainer = New-Object System.Windows.Controls.Border
     $iconContainer.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(28, 28, 30))
-    $iconContainer.BorderBrush = $script:BlueColor
+    $iconContainer.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
     $iconContainer.BorderThickness = "1.5"
     $iconContainer.CornerRadius = "6"
     $iconContainer.Width = 38
@@ -735,7 +709,7 @@ function New-Button {
     $iconText.FontSize = 12
     $iconText.FontFamily = "Segoe UI"
     $iconText.FontWeight = "Bold"
-    $iconText.Foreground = $script:BlueColor
+    $iconText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
     $iconText.HorizontalAlignment = "Center"
     $iconText.VerticalAlignment = "Center"
     $iconText.TextAlignment = "Center"
@@ -758,7 +732,7 @@ function New-Button {
     $descText.Text = $Description
     $descText.FontSize = 11
     $descText.FontFamily = "Segoe UI"
-    $descText.Foreground = $script:GrayColor
+    $descText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(180, 180, 180))
     $descText.TextWrapping = "Wrap"
     $descText.LineHeight = 16
 
@@ -772,7 +746,14 @@ function New-Button {
     $button.Tag = @{ Action = $Action }
     $button.Add_Click({
             $buttonConfig = $this.Tag
-            Invoke-Function -FunctionName $buttonConfig.Action
+            if ($buttonConfig.Action -is [System.Collections.IEnumerable] -and
+                -not ($buttonConfig.Action -is [string])) {
+                foreach ($func in $buttonConfig.Action) {
+                    Invoke-Function -FunctionName $func
+                }
+            } else {
+                Invoke-Function -FunctionName $buttonConfig.Action
+            }
         })
 
     return $button
@@ -782,7 +763,8 @@ function Show-Buttons {
     [CmdletBinding()]
     param([string]$Filter = "")
 
-    $script:sync.LeftButtonContainer.Children.Clear()
+    $script:sync.ButtonContainer.Children.Clear()
+    $wingetAvailable = Test-WingetAvailable
 
     $buttons = $script:ButtonConfig | Where-Object {
         ($script:sync.CurrentFilter -contains $_.Category) -and
@@ -800,7 +782,7 @@ function Show-Buttons {
         $noButtonsText.VerticalAlignment = "Center"
         $noButtonsText.Margin = "20"
 
-        $script:sync.LeftButtonContainer.Children.Add($noButtonsText) | Out-Null
+        $script:sync.ButtonContainer.Children.Add($noButtonsText) | Out-Null
         return
     }
 
@@ -835,10 +817,18 @@ function Show-Buttons {
         $categoryButtons = $groupedButtons[$category]
         $categoryButtons = $categoryButtons | Sort-Object Name
         $header = New-CategoryHeader -CategoryName $category
-        $script:sync.LeftButtonContainer.Children.Add($header) | Out-Null
-        foreach ($config in $categoryButtons) {
-            $button = New-Button -Name $config.Name -Description $config.Description -Action $config.Action -Icon $config.Icon
-            $script:sync.LeftButtonContainer.Children.Add($button) | Out-Null
+        $script:sync.ButtonContainer.Children.Add($header) | Out-Null
+
+        foreach ($Config in $categoryButtons) {
+            $button = New-Button -Name $Config.Name -Description $Config.Description -Action $Config.Action -Icon $Config.Icon
+
+            if ($Config.Category -eq "Install" -and !$wingetAvailable) {
+                $button.IsEnabled = $false
+                $button.ToolTip = "$($Config.Description) (Requires winget - currently unavailable)"
+                $button.Opacity = 0.5
+            }
+
+            $script:sync.ButtonContainer.Children.Add($button) | Out-Null
         }
     }
 }
@@ -879,7 +869,7 @@ function Initialize-UI {
     try {
         $script:sync.Window = [Windows.Markup.XamlReader]::Load(([System.Xml.XmlNodeReader]([xml]$xaml)))
 
-        $script:sync.LeftButtonContainer = $script:sync.Window.FindName("LeftButtonContainer")
+        $script:sync.ButtonContainer = $script:sync.Window.FindName("ButtonContainer")
         $script:sync.StatusText = $script:sync.Window.FindName("StatusText")
         $script:sync.SearchBox = $script:sync.Window.FindName("SearchBox")
 
@@ -953,7 +943,6 @@ function Initialize-UI {
             })
 
         Set-ActiveTab -TabName $script:sync.Settings.LastTab
-        Update-Status "MystUtil ready - $($script:ButtonCount) tools available"
 
         Write-Log "UI initialization completed successfully" -Level "INFO"
 
@@ -970,13 +959,6 @@ function Initialize-UI {
         throw
     }
 }
-
-$script:BlueColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246))
-$script:GrayColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(180, 180, 180))
-$script:DarkColor = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(42, 42, 47))
-
-$script:SearchTimer = New-Object System.Windows.Threading.DispatcherTimer
-$script:SearchTimer.Interval = [TimeSpan]::FromMilliseconds(300)
 
 class AppSettings {
     [int]$WindowWidth = 900
@@ -1113,91 +1095,39 @@ function Remove-ItemsSafely {
     return $sizeBefore
 }
 
-function Write-Log {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [string]$Message,
-        [ValidateSet("INFO", "WARN", "ERROR", "DEBUG", "SUCCESS")]
-        [string]$Level = "INFO"
+function Get-ButtonConfiguration {
+    return @(
+        @{ Name = "Empty Recycle Bin"; Description = "Permanently deletes all items in Recycle Bin"; Action = "Clear-RecycleBin"; Category = "Cleanup"; Icon = "[BIN]" },
+        @{ Name = "Clear Temp Files"; Description = "Comprehensive cleanup of temporary files and caches"; Action = "Clear-TempFiles"; Category = "Cleanup"; Icon = "[DEL]" },
+        @{ Name = "Clear Browser Cache"; Description = "Removes cache files from all major browsers"; Action = "Clear-BrowserCache"; Category = "Cleanup"; Icon = "[WEB]" },
+        @{ Name = "Clear Spotify Cache"; Description = "Clears Spotify cache and temporary data"; Action = "Clear-SpotifyCache"; Category = "Cleanup"; Icon = "[SPT]" },
+        @{ Name = "Clear Steam Cache"; Description = "Clears Steam cache, logs, and temporary files"; Action = "Clear-SteamCache"; Category = "Cleanup"; Icon = "[STM]" },
+        @{ Name = "Clear VRChat Data"; Description = "Clears VRChat cache, logs, and temporary data"; Action = "Clear-VRChatData"; Category = "Cleanup"; Icon = "[VRC]" },
+
+        @{ Name = "Install 7-Zip"; Description = "Downloads and installs 7-Zip file archiver"; Action = "Install-7Zip"; Category = "Install"; Icon = "[ZIP]" },
+        @{ Name = "Install VS Code"; Description = "Downloads and installs Visual Studio Code editor"; Action = "Install-VSCode"; Category = "Install"; Icon = "[IDE]" },
+        @{ Name = "Install Chrome"; Description = "Downloads and installs Google Chrome browser"; Action = "Install-Chrome"; Category = "Install"; Icon = "[CHR]" },
+        @{ Name = "Install WinRAR"; Description = "Downloads and installs WinRAR file archiver"; Action = "Install-WinRAR"; Category = "Install"; Icon = "[RAR]" },
+        @{ Name = "Install Spotify"; Description = "Downloads and installs Spotify music player"; Action = "Install-Spotify"; Category = "Install"; Icon = "[SPT]" },
+        @{ Name = "Install Steam"; Description = "Downloads and installs Steam gaming platform"; Action = "Install-Steam"; Category = "Install"; Icon = "[STM]" },
+
+        @{ Name = "System File Checker"; Description = "Runs SFC scan to check system file integrity"; Action = "Start-SFCScan"; Category = "System"; Icon = "[SFC]" },
+        @{ Name = "DISM Health Scan"; Description = "Scans and repairs Windows system image corruption"; Action = "Start-DISMScan"; Category = "System"; Icon = "[DISM]" },
+        @{ Name = "Driver Check"; Description = "Scans for missing or problematic device drivers"; Action = "Start-DriverCheck"; Category = "System"; Icon = "[DRV]" },
+        @{ Name = "Flush DNS Cache"; Description = "Clears DNS resolver cache"; Action = "Clear-DNSCache"; Category = "System"; Icon = "[DNS]" },
+        @{ Name = "Network Reset"; Description = "Resets network stack and TCP/IP configuration"; Action = "Reset-NetworkStack"; Category = "System"; Icon = "[NET]" },
+        @{ Name = "Disk Cleanup Tool"; Description = "Opens Windows built-in Disk Cleanup utility"; Action = "Start-DiskCleanup"; Category = "System"; Icon = "[DSK]" },
+        @{ Name = "Debloat System"; Description = "Removes unnecessary Windows bloatware"; Action = "Start-Debloat"; Category = "System"; Icon = "[DBLT]" },
+
+        @{ Name = "Remove VRChat Registry"; Description = "Removes VRChat registry keys and startup entries"; Action = "Remove-VRChatRegistry"; Category = "Games"; Icon = "[VRC]" },
+
+        @{ Name = "Yurei"; Description = "For Yurei"; Action = "Invoke-YureiMaintenance"; Category = "Custom"; Icon = "[TEST]" },
+        @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" },
+        @{ Name = "Test"; Description = "For Myst"; Action = @("Clear-TempFiles", "Clear-RecycleBin"); Category = "Custom"; Icon = "[TEST]" }
     )
-
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logEntry = "[$timestamp] [$Level] $Message"
-
-    try {
-        [System.IO.File]::AppendAllText($script:sync.LogPath, "$logEntry`n")
-    } catch {
-        if ($Level -eq "ERROR") {
-            Write-Host "Logging failed: $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
-
-    if ($DebugMode -and $Level -eq "DEBUG") {
-        Write-Host "[$timestamp] DEBUG: $Message" -ForegroundColor Cyan
-    }
 }
 
-function Update-Status {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$Message,
-        [ValidateSet("INFO", "WARN", "ERROR", "SUCCESS")]
-        [string]$Level = "INFO"
-    )
-
-    $timestamp = Get-Date -Format "HH:mm:ss"
-
-    if ($script:sync.StatusText) {
-        try {
-            $script:sync.StatusText.Dispatcher.BeginInvoke([Action] {
-                    $script:sync.StatusText.Text = $Message
-                    $script:sync.StatusText.Foreground = $script:BlueColor
-                }) | Out-Null
-        } catch { }
-    }
-
-    $color = switch ($Level) {
-        "SUCCESS" { "Green" }
-        "ERROR" { "Red" }
-        "WARN" { "Yellow" }
-        default { "Cyan" }
-    }
-    Write-Host "[$timestamp] $Message" -ForegroundColor $color
-    Write-Log $Message -Level $Level
-}
-
-$script:ButtonConfig = @(
-    @{ Name = "Empty Recycle Bin"; Description = "Permanently deletes all items in Recycle Bin"; Action = "Clear-RecycleBin"; Category = "Cleanup"; Icon = "[BIN]" },
-    @{ Name = "Clear Temp Files"; Description = "Comprehensive cleanup of temporary files and caches"; Action = "Clear-TempFiles"; Category = "Cleanup"; Icon = "[DEL]" },
-    @{ Name = "Clear Browser Cache"; Description = "Removes cache files from all major browsers"; Action = "Clear-BrowserCache"; Category = "Cleanup"; Icon = "[WEB]" },
-    @{ Name = "Clear Spotify Cache"; Description = "Clears Spotify cache and temporary data"; Action = "Clear-SpotifyCache"; Category = "Cleanup"; Icon = "[SPT]" },
-    @{ Name = "Clear Steam Cache"; Description = "Clears Steam cache, logs, and temporary files"; Action = "Clear-SteamCache"; Category = "Cleanup"; Icon = "[STM]" },
-    @{ Name = "Clear VRChat Data"; Description = "Clears VRChat cache, logs, and temporary data"; Action = "Clear-VRChatData"; Category = "Cleanup"; Icon = "[VRC]" },
-
-    @{ Name = "Install 7-Zip"; Description = "Downloads and installs 7-Zip file archiver"; Action = "Install-7Zip"; Category = "Install"; Icon = "[ZIP]" },
-    @{ Name = "Install VS Code"; Description = "Downloads and installs Visual Studio Code editor"; Action = "Install-VSCode"; Category = "Install"; Icon = "[IDE]" },
-    @{ Name = "Install Chrome"; Description = "Downloads and installs Google Chrome browser"; Action = "Install-Chrome"; Category = "Install"; Icon = "[CHR]" },
-    @{ Name = "Install WinRAR"; Description = "Downloads and installs WinRAR file archiver"; Action = "Install-WinRAR"; Category = "Install"; Icon = "[RAR]" },
-    @{ Name = "Install Spotify"; Description = "Downloads and installs Spotify music player"; Action = "Install-Spotify"; Category = "Install"; Icon = "[SPT]" },
-    @{ Name = "Install Steam"; Description = "Downloads and installs Steam gaming platform"; Action = "Install-Steam"; Category = "Install"; Icon = "[STM]" },
-
-    @{ Name = "System File Checker"; Description = "Runs SFC scan to check system file integrity"; Action = "Start-SFCScan"; Category = "System"; Icon = "[SFC]" },
-    @{ Name = "DISM Health Scan"; Description = "Scans and repairs Windows system image corruption"; Action = "Start-DISMScan"; Category = "System"; Icon = "[DISM]" },
-    @{ Name = "Driver Check"; Description = "Scans for missing or problematic device drivers"; Action = "Start-DriverCheck"; Category = "System"; Icon = "[DRV]" },
-    @{ Name = "Flush DNS Cache"; Description = "Clears DNS resolver cache"; Action = "Clear-DNSCache"; Category = "System"; Icon = "[DNS]" },
-    @{ Name = "Network Reset"; Description = "Resets network stack and TCP/IP configuration"; Action = "Reset-NetworkStack"; Category = "System"; Icon = "[NET]" },
-    @{ Name = "Disk Cleanup Tool"; Description = "Opens Windows built-in Disk Cleanup utility"; Action = "Start-DiskCleanup"; Category = "System"; Icon = "[DSK]" },
-    @{ Name = "Debloat System"; Description = "Removes unnecessary Windows bloatware"; Action = "Start-Debloat"; Category = "System"; Icon = "[DBLT]" },
-
-    @{ Name = "Remove VRChat Registry"; Description = "Removes VRChat registry keys and startup entries"; Action = "Remove-VRChatRegistry"; Category = "Games"; Icon = "[VRC]" },
-
-    @{ Name = "Yurei"; Description = "For Yurei"; Action = "Invoke-YureiMaintenance"; Category = "Custom"; Icon = "[TEST]" },
-    @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" }
-)
-
-$script:ButtonCount = $script:ButtonConfig.Count
+$script:ButtonConfig = Get-ButtonConfiguration
 
 Write-Host ""
 Write-Host ("=" * 70) -ForegroundColor Blue
@@ -1207,6 +1137,11 @@ Write-Host ("=" * 70) -ForegroundColor Blue
 
 try {
     Initialize-Configuration
+
+    if (!(Test-WingetAvailable)) {
+        Update-Status "Warning: Winget not found. Some install features may not work." "WARN"
+    }
+
     Initialize-UI
 } catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red

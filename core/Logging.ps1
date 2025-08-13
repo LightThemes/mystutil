@@ -38,7 +38,13 @@ function Update-Status {
         try {
             $script:sync.StatusText.Dispatcher.BeginInvoke([Action] {
                     $script:sync.StatusText.Text = $Message
-                    $script:sync.StatusText.Foreground = $script:BlueColor
+
+                    $script:sync.StatusText.Foreground = switch ($Level) {
+                        "SUCCESS" { [System.Windows.Media.Brushes]::LimeGreen }
+                        "ERROR" { [System.Windows.Media.Brushes]::Red }
+                        "WARN" { [System.Windows.Media.Brushes]::Orange }
+                        default { [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(100, 181, 246)) }
+                    }
                 }) | Out-Null
         } catch { }
     }

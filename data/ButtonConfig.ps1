@@ -24,7 +24,6 @@
     @{ Name = "Remove VRChat Registry"; Description = "Removes VRChat registry keys and startup entries"; Action = "Remove-VRChatRegistry"; Category = "Games"; Icon = "[VRC]" },
 
     @{ Name = "Yurei"; Description = "For Yurei"; Action = "Invoke-YureiMaintenance"; Category = "Custom"; Icon = "[TEST]" },
-    @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" }
+    @{ Name = "Myst"; Description = "For Myst"; Action = "Invoke-MystMaintenance"; Category = "Custom"; Icon = "[TEST]" },
+    @{ Name = "Test"; Description = "For Myst"; Action = @("Clear-TempFiles", "Clear-RecycleBin"); Category = "Custom"; Icon = "[TEST]" }
 )
-
-$script:ButtonCount = $script:ButtonConfig.Count
